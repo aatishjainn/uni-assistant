@@ -9,8 +9,11 @@ const audit = require('../audit');
 const asyncHandler = require('../middleware/asyncHandler');
 const { authenticate } = require('../middleware/auth');
 
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false,
-  message: { error: 'Too many login attempts. Try again later.' } });
+// Only FAILED attempts count toward the login limit (brute-force protection)
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, skipSuccessfulRequests: true,
+  standardHeaders: true, legacyHeaders: false, message: { error: 'Too many failed login attempts. Try again later.' } });
+const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many sign-ups from this network. Try again later.' } });
 
 const loginSchema = z.object({ email: z.string().email().max(255), password: z.string().min(1).max(200) });
 const registerSchema = z.object({
@@ -46,7 +49,7 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
 }));
 
 // Public sign-up can ONLY create an 'applicant'. Other roles are assigned by an admin / the seed script.
-router.post('/register', loginLimiter, asyncHandler(async (req, res) => {
+router.post('/register', registerLimiter, asyncHandler(async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Name, valid email and a password of 8+ characters are required' });
   const { full_name, email, password } = parsed.data;

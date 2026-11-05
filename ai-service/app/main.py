@@ -1,3 +1,4 @@
+import json
 import logging
 import secrets
 from typing import Literal
@@ -6,7 +7,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .config import settings
-from .prompts import GENERATE_TEMPLATES, chat_system_prompt, BASE_RULES
+from .prompts import (GENERATE_TEMPLATES, chat_system_prompt, BASE_RULES,
+                      classify_system_prompt, answer_system_prompt)
 from .providers.base import LLMProvider
 
 log = logging.getLogger("ai-service")
@@ -35,7 +37,7 @@ def require_service_token(x_service_token: str = Header(default="")) -> None:
 
 class HistoryItem(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=settings.max_message_chars)
+    content: str = Field(max_length=8000)  # assistant answers can be long
 
 
 class ChatRequest(BaseModel):
@@ -88,3 +90,66 @@ async def generate(req: GenerateRequest, provider: LLMProvider = Depends(get_pro
 async def embed(req: EmbedRequest, provider: LLMProvider = Depends(get_provider)):
     vectors = await _call(provider.embed(req.texts))
     return {"embeddings": vectors}
+
+
+DAYS = {"today", "tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "week"}
+
+
+class IntentInfo(BaseModel):
+    name: str = Field(pattern=r"^[a-z_]{1,60}$")
+    description: str = Field(max_length=300)
+
+
+class ClassifyRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=settings.max_message_chars)
+    recent: list[HistoryItem] = []
+    intents: list[IntentInfo] = Field(min_length=1, max_length=30)
+
+
+class UserContext(BaseModel):
+    first_name: str = Field(max_length=60)
+    role: str = Field(max_length=20)
+
+
+class AnswerRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=settings.max_message_chars)
+    history: list[HistoryItem] = []
+    data: dict | list
+    user: UserContext
+
+
+def parse_classification(text: str, valid: set[str]) -> dict:
+    """Never trust model output: anything unexpected becomes 'unclear'."""
+    fallback = {"intent": "unclear", "about_other_person": False, "day": None}
+    cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        obj = json.loads(cleaned)
+        if not isinstance(obj, dict):
+            return fallback
+    except Exception:
+        return fallback
+    intent = obj.get("intent")
+    if intent not in valid:
+        intent = "unclear"
+    day = obj.get("day")
+    return {
+        "intent": intent,
+        "about_other_person": obj.get("about_other_person") is True,
+        "day": day if day in DAYS else None,
+    }
+
+
+@app.post("/ai/classify", dependencies=[Depends(require_service_token)])
+async def classify(req: ClassifyRequest, provider: LLMProvider = Depends(get_provider)):
+    recent = [h.model_dump() for h in req.recent[-4:]]
+    text = await _call(provider.generate(classify_system_prompt(req.intents), recent, req.message, json_mode=True))
+    return parse_classification(text, {i.name for i in req.intents})
+
+
+@app.post("/ai/answer", dependencies=[Depends(require_service_token)])
+async def answer(req: AnswerRequest, provider: LLMProvider = Depends(get_provider)):
+    history = [h.model_dump() for h in req.history[-6:]]
+    payload = json.dumps(req.data, default=str)[:20000]
+    prompt = f"<data>\n{payload}\n</data>\n\nQuestion: {req.message}"
+    text = await _call(provider.generate(answer_system_prompt(req.user.first_name, req.user.role), history, prompt))
+    return {"answer": text, "sources": []}

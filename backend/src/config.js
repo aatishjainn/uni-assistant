@@ -14,6 +14,8 @@ module.exports = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '8h',
   aiUrl: process.env.AI_SERVICE_URL || 'http://localhost:8000',
   aiToken: required('AI_SERVICE_TOKEN'),
+  tz: process.env.UNIVERSITY_TZ || 'Asia/Kolkata',
+  chatRateLimit: Number(process.env.CHAT_RATE_LIMIT || 15),
   // Either one DATABASE_URL (hosted DB such as Neon) or the separate DB_* values (local DB)
   db: process.env.DATABASE_URL
     ? { connectionString: process.env.DATABASE_URL, ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: true } }
