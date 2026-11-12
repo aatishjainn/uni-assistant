@@ -19,7 +19,7 @@ function fakeClassify(message) {
   else if (m.includes('marks')) intent = 'student_marks';
   else if (m.includes('next class')) intent = 'student_next_class';
   else if (m.includes('exam')) intent = 'student_next_exam';
-  else if (m.includes('admission') || m.includes('fee')) intent = 'university_info';
+  else if (m.includes('hostel')) intent = 'university_info';
   else if (m.includes('gibberish')) intent = 'made_up_intent';
   return { intent, about_other_person: m.includes('someone else'), day: null };
 }
@@ -163,8 +163,8 @@ test('AI returns an invented intent -> treated as unclear', async () => {
   assert.match(r.json.answer, /not sure what you're asking/);
 });
 
-test('admission question has no approved documents yet -> says so, does not invent', async () => {
-  const r = await chat('student1@uni.test', 'What is the last date for admission?');
+test('question with no matching approved document -> says so, does not invent', async () => {
+  const r = await chat('student1@uni.test', 'Tell me about the zxqv hostel rules');
   assert.match(r.json.answer, /don't have verified university information/);
   assert.strictEqual(calls.answer.length, 0);
 });

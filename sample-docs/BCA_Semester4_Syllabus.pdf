@@ -1,0 +1,67 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+5 0 obj
+<< /Length 1723 >>
+stream
+BT /F1 11 Tf 50 750 Td 14 TL
+(BCA Semester 4 Syllabus) Tj T*
+() Tj T*
+(ABOUT THIS DOCUMENT) Tj T*
+() Tj T*
+(SAMPLE / DUMMY DOCUMENT for testing only. Not real university policy.) Tj T*
+() Tj T*
+(BCA401 DATABASE MANAGEMENT SYSTEMS) Tj T*
+() Tj T*
+(Unit 1: Introduction to databases, data models, ER diagrams and the relational model.) Tj T*
+(Unit 2: SQL: DDL, DML, joins, subqueries and views.) Tj T*
+(Unit 3: Normalization: functional dependencies, 1NF, 2NF, 3NF and BCNF.) Tj T*
+(Unit 4: Transactions, ACID properties, concurrency control and recovery.) Tj T*
+(Unit 5: Introduction to NoSQL databases and indexing.) Tj T*
+(Textbook: Fundamentals of Database Systems \(dummy reference\). Credits: 4. Internal) Tj T*
+(assessment 40 marks, end-semester exam 60 marks.) Tj T*
+() Tj T*
+(BCA402 PYTHON PROGRAMMING) Tj T*
+() Tj T*
+(Unit 1: Python basics, data types, operators and control flow.) Tj T*
+(Unit 2: Functions, modules, packages and exception handling.) Tj T*
+(Unit 3: Lists, tuples, dictionaries and sets; file handling.) Tj T*
+(Unit 4: Object oriented programming: classes, inheritance and polymorphism.) Tj T*
+(Unit 5: Libraries for data work: NumPy and pandas basics, and an introduction to web APIs.) Tj T*
+(Lab: 12 practical sessions in Computer Lab 1. Credits: 4.) Tj T*
+() Tj T*
+(BCA403 COMPUTER NETWORKS) Tj T*
+() Tj T*
+(Unit 1: Network models, OSI and TCP/IP layers.) Tj T*
+(Unit 2: Physical layer, data link layer and error detection.) Tj T*
+(Unit 3: Network layer, IP addressing, subnetting and routing algorithms.) Tj T*
+(Unit 4: Transport layer: TCP, UDP, congestion control.) Tj T*
+(Unit 5: Application layer protocols: HTTP, DNS, SMTP and network security basics. Credits:) Tj T*
+(3.) Tj T*
+() Tj T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2086
+%%EOF

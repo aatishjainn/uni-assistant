@@ -9,7 +9,7 @@ const SUGGESTIONS = [
   'Suggest final-year project ideas',
 ];
 
-export default function Chat({ user, onLogout }) {
+export default function Chat({ user, onLogout, onAdmin }) {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);   // {role: 'user'|'assistant', text}
@@ -38,7 +38,7 @@ export default function Chat({ user, onLogout }) {
     try {
       const r = await api.session(id);
       setActiveId(id);
-      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message })));
+      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message, sources: m.source_metadata?.sources || [] })));
     } catch (e) {
       setError(e.message);
     }
@@ -64,7 +64,7 @@ export default function Chat({ user, onLogout }) {
     setLoading(true);
     try {
       const r = await api.chat(message, activeId, mode);
-      setMessages((m) => [...m, { role: 'assistant', text: r.answer }]);
+      setMessages((m) => [...m, { role: 'assistant', text: r.answer, sources: r.sources || [] }]);
       if (!activeId) { setActiveId(r.sessionId); loadSessions(); }
     } catch (e) {
       setError(e.message);
@@ -104,6 +104,9 @@ export default function Chat({ user, onLogout }) {
         <div className="p-3 border-t border-slate-700 text-sm">
           <div className="font-medium truncate">{user.full_name}</div>
           <div className="text-slate-400 capitalize mb-2">{user.role}</div>
+          {user.role === 'admin' && (
+            <button onClick={onAdmin} className="block mb-2 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 py-1.5 font-medium">⚙ Admin panel</button>
+          )}
           <button onClick={onLogout} className="text-slate-300 hover:text-white underline">Sign out</button>
         </div>
       </aside>
@@ -137,7 +140,7 @@ export default function Chat({ user, onLogout }) {
                 </div>
               </div>
             )}
-            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} />)}
+            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} sources={m.sources} />)}
             {loading && <TypingIndicator />}
             <div ref={bottomRef} />
           </div>

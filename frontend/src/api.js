@@ -9,13 +9,14 @@ export class ApiError extends Error {
 }
 
 async function request(path, { method = 'GET', body } = {}) {
-  const headers = { 'Content-Type': 'application/json' };
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;   // file uploads
+  const headers = isForm ? {} : { 'Content-Type': 'application/json' };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let res;
   try {
-    res = await fetch('/api' + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    res = await fetch('/api' + path, { method, headers, body: isForm ? body : body ? JSON.stringify(body) : undefined });
   } catch {
     throw new ApiError('Cannot reach the server. Is the backend running?', 0);
   }
@@ -43,4 +44,17 @@ export const api = {
   sessions: () => request('/chat/sessions'),
   session: (id) => request(`/chat/sessions/${id}`),
   deleteSession: (id) => request(`/chat/sessions/${id}`, { method: 'DELETE' }),
+
+  // ---- admin panel (admin accounts only; the server enforces this) ----
+  documents: () => request('/admin/documents'),
+  uploadDocument: (formData) => request('/admin/documents', { method: 'POST', body: formData }),
+  updateDocument: (id, fields) => request(`/admin/documents/${id}`, { method: 'PATCH', body: fields }),
+  reindexDocument: (id) => request(`/admin/documents/${id}/reindex`, { method: 'POST' }),
+  deleteDocument: (id) => request(`/admin/documents/${id}`, { method: 'DELETE' }),
+  admissions: () => request('/admin/admissions'),
+  saveAdmission: (id, fields) => request(`/admin/admissions/${id}`, { method: 'PUT', body: fields }),
+  notices: () => request('/admin/notices'),
+  createNotice: (fields) => request('/admin/notices', { method: 'POST', body: fields }),
+  setNoticePublished: (id, is_published) => request(`/admin/notices/${id}`, { method: 'PATCH', body: { is_published } }),
+  analytics: () => request('/admin/analytics'),
 };

@@ -102,3 +102,34 @@ async function getFacultySubjects(userId) {
 
 module.exports = { getAttendance, getStudentTimetable, getUpcomingExams, getMarks, getSemesterSubjects,
   getFacultyTimetable, getFacultySubjects };
+
+// ---------- public, approved university records ----------
+async function getAdmissions() {
+  const { rows } = await db.query(
+    `SELECT c.course_name, d.department_name, c.duration_years, a.eligibility,
+            to_char(a.application_deadline, 'YYYY-MM-DD') AS application_deadline, a.fee_amount,
+            a.required_documents, a.application_url, a.contact_info, a.scholarship_info
+       FROM admissions a JOIN courses c ON c.id = a.course_id JOIN departments d ON d.id = c.department_id
+      WHERE a.status = 'approved' ORDER BY c.course_name LIMIT 50`);
+  return rows;
+}
+
+async function getDepartments() {
+  const { rows } = await db.query(
+    `SELECT d.department_name, u.full_name AS head_of_department,
+            COALESCE(array_agg(c.course_name ORDER BY c.course_name) FILTER (WHERE c.id IS NOT NULL), '{}') AS courses
+       FROM departments d LEFT JOIN users u ON u.id = d.hod_user_id LEFT JOIN courses c ON c.department_id = d.id
+      GROUP BY d.id, u.full_name ORDER BY d.department_name`);
+  return rows;
+}
+
+async function getNotices() {
+  const { rows } = await db.query(
+    `SELECT title, content, category, to_char(published_at, 'YYYY-MM-DD') AS published
+       FROM notices WHERE is_published ORDER BY published_at DESC NULLS LAST LIMIT 5`);
+  return rows;
+}
+
+module.exports.getAdmissions = getAdmissions;
+module.exports.getDepartments = getDepartments;
+module.exports.getNotices = getNotices;

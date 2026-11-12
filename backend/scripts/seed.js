@@ -183,12 +183,21 @@ const TIMES = [['09:00', '10:00'], ['10:00', '11:00'], ['11:00', '12:00'], ['12:
       `INSERT INTO student_marks (student_id, examination_id, marks_obtained)
        SELECT * FROM unnest($1::uuid[], $2::uuid[], $3::numeric[])`, [marks.s, marks.ex, marks.m]);
 
-    // Admissions (DUMMY values). MCA deadline is deliberately NULL to test "no fabricated information".
+    // Admissions (DUMMY values). Missing fields are deliberately left NULL to test "no fabricated information":
+    // MCA has no deadline / link / scholarship; BBA has no scholarship.
     await c.query(
-      `INSERT INTO admissions (course_id, eligibility, application_deadline, fee_amount, status) VALUES
-        ($1, '10+2 in any stream with at least 45% marks (dummy data)', CURRENT_DATE + 30, 45000, 'approved'),
-        ($2, 'Bachelor degree with Mathematics at 10+2 or graduation level (dummy data)', NULL, 60000, 'approved'),
-        ($3, '10+2 in any stream with at least 50% marks (dummy data)', CURRENT_DATE + 45, 50000, 'approved')`,
+      `INSERT INTO admissions (course_id, eligibility, application_deadline, fee_amount, status,
+                               required_documents, application_url, contact_info, scholarship_info) VALUES
+        ($1, '10+2 in any stream with at least 45% marks (dummy data)', CURRENT_DATE + 30, 45000, 'approved',
+             '10th and 12th marksheets, ID proof, passport-size photographs, transfer certificate (dummy data)',
+             'https://example.edu/apply/bca', 'admissions@example.edu, +91-00000-00000 (dummy)',
+             'Merit scholarship of 10% fee waiver for 12th marks above 85% (dummy data)'),
+        ($2, 'Bachelor degree with Mathematics at 10+2 or graduation level (dummy data)', NULL, 60000, 'approved',
+             'Graduation marksheets, ID proof, passport-size photographs (dummy data)',
+             NULL, 'admissions@example.edu, +91-00000-00000 (dummy)', NULL),
+        ($3, '10+2 in any stream with at least 50% marks (dummy data)', CURRENT_DATE + 45, 50000, 'approved',
+             '10th and 12th marksheets, ID proof, passport-size photographs (dummy data)',
+             'https://example.edu/apply/bba', 'admissions@example.edu, +91-00000-00000 (dummy)', NULL)`,
       [courses.BCA, courses.MCA, courses.BBA]);
 
     await c.query(

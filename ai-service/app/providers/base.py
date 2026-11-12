@@ -10,5 +10,5 @@ class LLMProvider(ABC):
         json_mode=True asks the model to reply with JSON only (used for classification)."""
 
     @abstractmethod
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        ...
+    async def embed(self, texts: list[str], task: str = "document") -> list[list[float]]:
+        """task: 'document' when indexing text, 'query' when embedding a user question."""

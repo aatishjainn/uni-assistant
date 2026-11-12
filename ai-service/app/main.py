@@ -3,12 +3,13 @@ import logging
 import secrets
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from .config import settings
 from .prompts import (GENERATE_TEMPLATES, chat_system_prompt, BASE_RULES,
                       classify_system_prompt, answer_system_prompt)
+from .ingest import IngestError, extract_and_chunk
 from .providers.base import LLMProvider
 
 log = logging.getLogger("ai-service")
@@ -55,6 +56,7 @@ class GenerateRequest(BaseModel):
 
 class EmbedRequest(BaseModel):
     texts: list[str] = Field(min_length=1, max_length=100)
+    task: Literal["document", "query"] = "document"
 
 
 async def _call(coro):
@@ -88,7 +90,7 @@ async def generate(req: GenerateRequest, provider: LLMProvider = Depends(get_pro
 
 @app.post("/ai/embed", dependencies=[Depends(require_service_token)])
 async def embed(req: EmbedRequest, provider: LLMProvider = Depends(get_provider)):
-    vectors = await _call(provider.embed(req.texts))
+    vectors = await _call(provider.embed(req.texts, task=req.task))
     return {"embeddings": vectors}
 
 
@@ -116,6 +118,7 @@ class AnswerRequest(BaseModel):
     history: list[HistoryItem] = []
     data: dict | list
     user: UserContext
+    kind: Literal["personal", "public_records", "documents"] = "personal"
 
 
 def parse_classification(text: str, valid: set[str]) -> dict:
@@ -151,5 +154,39 @@ async def answer(req: AnswerRequest, provider: LLMProvider = Depends(get_provide
     history = [h.model_dump() for h in req.history[-6:]]
     payload = json.dumps(req.data, default=str)[:20000]
     prompt = f"<data>\n{payload}\n</data>\n\nQuestion: {req.message}"
-    text = await _call(provider.generate(answer_system_prompt(req.user.first_name, req.user.role), history, prompt))
+    text = await _call(provider.generate(answer_system_prompt(req.user.first_name, req.user.role, req.kind), history, prompt))
     return {"answer": text, "sources": []}
+
+
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
+@app.post("/ai/ingest", dependencies=[Depends(require_service_token)])
+async def ingest(file: UploadFile = File(...), kind: Literal["pdf", "docx"] = Form(...),
+                 provider: LLMProvider = Depends(get_provider)):
+    """Extract text, split into chunks and (if possible) embed them. Storage is done by the Express backend."""
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large")
+    try:
+        chunks = extract_and_chunk(data, kind)
+    except IngestError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    embeddings, embedding_error = None, None
+    try:
+        embeddings = []
+        texts = [c["text"] for c in chunks]
+        for i in range(0, len(texts), 40):
+            embeddings.extend(await provider.embed(texts[i:i + 40], task="document"))
+        if len(embeddings) != len(chunks):
+            raise RuntimeError("embedding count mismatch")
+    except Exception:
+        log.exception("Embedding failed during ingest")   # text search still works without embeddings
+        embeddings, embedding_error = None, "Embeddings unavailable (model quota or network). Keyword search only."
+
+    return {
+        "chunks": [{"index": c["index"], "text": c["text"], "page": c["page"],
+                    "embedding": embeddings[i] if embeddings else None} for i, c in enumerate(chunks)],
+        "embedding_error": embedding_error,
+    }

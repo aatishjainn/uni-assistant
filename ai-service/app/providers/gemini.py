@@ -46,10 +46,13 @@ class GeminiProvider(LLMProvider):
                 raise
         raise last_error  # every model was unavailable
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], task: str = "document") -> list[list[float]]:
         resp = await self.client.aio.models.embed_content(
             model=settings.gemini_embed_model,
             contents=texts,
-            config=types.EmbedContentConfig(output_dimensionality=settings.embed_dimensions),
+            config=types.EmbedContentConfig(
+                output_dimensionality=settings.embed_dimensions,
+                task_type="RETRIEVAL_QUERY" if task == "query" else "RETRIEVAL_DOCUMENT",
+            ),
         )
         return [e.values for e in resp.embeddings]

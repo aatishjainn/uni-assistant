@@ -15,6 +15,14 @@ module.exports = {
   aiUrl: process.env.AI_SERVICE_URL || 'http://localhost:8000',
   aiToken: required('AI_SERVICE_TOKEN'),
   tz: process.env.UNIVERSITY_TZ || 'Asia/Kolkata',
+  storageDir: process.env.STORAGE_DIR || path.join(__dirname, '..', '..', 'storage'),
+  maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 10),
+  embedDimensions: Number(process.env.EMBED_DIMENSIONS || 768),
+  ragTopK: Number(process.env.RAG_TOP_K || 5),
+  // Vector matches below this cosine similarity are ignored (tune with your embedding model)
+  // Share of the question's key terms a chunk must contain to count as a keyword match
+  ragMinTermMatch: Number(process.env.RAG_MIN_TERM_MATCH || 0.6),
+  ragMinSimilarity: Number(process.env.RAG_MIN_SIMILARITY || 0.6),
   chatRateLimit: Number(process.env.CHAT_RATE_LIMIT || 15),
   // Either one DATABASE_URL (hosted DB such as Neon) or the separate DB_* values (local DB)
   db: process.env.DATABASE_URL

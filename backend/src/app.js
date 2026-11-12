@@ -15,6 +15,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/students', require('./routes/students'));
 app.use('/api/faculty', require('./routes/faculty'));
+app.use('/api/admin', require('./routes/admin'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 // eslint-disable-next-line no-unused-vars
