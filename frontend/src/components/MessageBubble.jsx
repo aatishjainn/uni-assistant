@@ -1,7 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-export default function MessageBubble({ role, text, sources = [] }) {
+export default function MessageBubble({ role, text, sources = [], ui = null, onMap }) {
   const isUser = role === 'user';
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -18,6 +18,11 @@ export default function MessageBubble({ role, text, sources = [] }) {
               <span key={s.n} className="inline-block mr-2">[{s.n}] {s.title}{s.page ? ` (p. ${s.page})` : ''}</span>
             ))}
           </div>
+        )}
+        {!isUser && ui?.map && onMap && (
+          <button onClick={() => onMap(ui.map)} className="mt-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-3 py-1.5">
+            🗺 Show on campus map
+          </button>
         )}
       </div>
     </div>

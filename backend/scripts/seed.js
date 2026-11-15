@@ -3,6 +3,7 @@
 //   npm run seed -- --reset    -> WIPES all data (except roles) and seeds again
 const bcrypt = require('bcryptjs');
 const db = require('../src/db');
+const seedCampus = require('./campusSeed');
 
 const PASSWORD = 'Password@123';
 const reset = process.argv.includes('--reset');
@@ -99,6 +100,9 @@ const TIMES = [['09:00', '10:00'], ['10:00', '11:00'], ['11:00', '12:00'], ['12:
     for (const [name, floor, type] of [['Computer Lab 1', 1, 'lab'], ['Computer Lab 2', 1, 'lab'], ['Seminar Hall', 0, 'hall'], ['Library', 0, 'library'],
       ['Administrative Office', 0, 'office'], ['Examination Department', 1, 'office'], ['HOD Office - Computer Science', 2, 'office']]) await mkRoom(main, name, floor, type);
     for (const [name, floor] of [['Room 201 (BCA)', 2], ['Room 202 (BCA)', 2], ['Room 203 (MCA)', 2], ['Room 301 (BBA)', 3]]) await mkRoom(acad, name, floor, 'classroom');
+
+    // Campus map (buildings' rooms, corridors, stairs, lifts, QR codes)
+    await seedCampus(c, { main, acad, rooms: room });
 
     // Faculty -> subjects
     const year = '2026-27';

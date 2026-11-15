@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { api } from '../api.js';
 
-const TABS = ['Documents', 'Admissions', 'Notices', 'Analytics'];
+const TABS = ['Documents', 'Admissions', 'Notices', 'Campus', 'Analytics'];
 const DOC_TYPES = ['syllabus', 'notice', 'policy', 'admission', 'calendar', 'faq', 'handbook', 'other'];
 const field = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
 const btn = 'rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50';
@@ -234,6 +235,114 @@ function NoticesTab() {
   );
 }
 
+// ------------------------------------------------------------------ Campus (buildings, places, QR codes)
+const qrUrl = (token) => `${window.location.origin}/#map?at=${token}`;
+
+function QrImage({ token, size = 220 }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => { QRCode.toDataURL(qrUrl(token), { width: size, margin: 1 }).then(setSrc).catch(() => setSrc('')); }, [token, size]);
+  return src ? <img src={src} width={size} height={size} alt={`QR code for ${token}`} /> : <div style={{ width: size, height: size }} />;
+}
+
+function BuildingRow({ b, onSaved, setError }) {
+  const [f, setF] = useState({ building_name: b.building_name, latitude: b.latitude, longitude: b.longitude, description: b.description || '' });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  async function save() {
+    setError('');
+    try { await api.saveBuilding(b.id, { ...f, latitude: Number(f.latitude), longitude: Number(f.longitude) }); onSaved(); } catch (e) { setError(e.message); }
+  }
+  return (
+    <tr className="border-t border-slate-100">
+      <td className="p-2"><input className={field} value={f.building_name} onChange={set('building_name')} aria-label="Building name" /></td>
+      <td className="p-2"><input className={field} value={f.latitude} onChange={set('latitude')} aria-label="Latitude" /></td>
+      <td className="p-2"><input className={field} value={f.longitude} onChange={set('longitude')} aria-label="Longitude" /></td>
+      <td className="p-2"><input className={field} value={f.description} onChange={set('description')} aria-label="Description" /></td>
+      <td className="p-2"><button className={`${btn} bg-indigo-600 text-white hover:bg-indigo-700`} onClick={save}>Save</button></td>
+    </tr>
+  );
+}
+
+function PlaceRow({ p, onSaved, setError, onQr }) {
+  const [f, setF] = useState({ node_name: p.node_name, keywords: p.keywords || '', is_public: p.is_public });
+  async function save() {
+    setError('');
+    try { await api.savePlace(p.id, f); onSaved(); } catch (e) { setError(e.message); }
+  }
+  return (
+    <tr className="border-t border-slate-100 align-top">
+      <td className="p-2 text-xs text-slate-500 whitespace-nowrap">{p.building_name}<br />floor {p.floor_number}</td>
+      <td className="p-2"><input className={field} value={f.node_name} onChange={(e) => setF({ ...f, node_name: e.target.value })} aria-label="Place name" /></td>
+      <td className="p-2"><input className={field} value={f.keywords} onChange={(e) => setF({ ...f, keywords: e.target.value })} placeholder="e.g. canteen food" aria-label="Search keywords" /></td>
+      <td className="p-2 text-center"><input type="checkbox" checked={f.is_public} onChange={(e) => setF({ ...f, is_public: e.target.checked })} aria-label="Visible to everyone" /></td>
+      <td className="p-2 whitespace-nowrap">
+        <button className={`${btn} bg-indigo-600 text-white hover:bg-indigo-700 mr-2`} onClick={save}>Save</button>
+        <button className={`${btn} border border-slate-300 hover:bg-slate-50`} onClick={() => onQr(p)}>QR</button>
+      </td>
+    </tr>
+  );
+}
+
+function CampusTab() {
+  const [buildings, setBuildings] = useState([]);
+  const [places, setPlaces] = useState([]);
+  const [error, setError] = useState('');
+  const [qr, setQr] = useState(null);
+  const load = useCallback(async () => {
+    try { const [b, p] = await Promise.all([api.adminBuildings(), api.adminPlaces()]); setBuildings(b.buildings); setPlaces(p.places); } catch (e) { setError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function printAll() {
+    const w = window.open('', '_blank');
+    if (!w) return setError('Allow pop-ups to print the QR codes.');
+    const cards = [];
+    for (const p of places.filter((x) => x.qr_code)) {
+      const img = await QRCode.toDataURL(qrUrl(p.qr_code), { width: 220, margin: 1 });
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      cards.push(`<div class="c"><img src="${img}" width="180" height="180"><div class="n">${esc(p.node_name)}</div><div class="s">${esc(p.building_name)} · floor ${p.floor_number}</div></div>`);
+    }
+    w.document.write(`<!doctype html><title>Campus QR codes</title><style>body{font-family:Arial,sans-serif}.g{display:flex;flex-wrap:wrap;gap:12px}.c{width:200px;border:1px solid #999;padding:8px;text-align:center;page-break-inside:avoid}.n{font-weight:bold;margin-top:4px}.s{font-size:12px;color:#444}</style><div class="g">${cards.join('')}</div>`);
+    w.document.close(); w.focus(); w.print();
+  }
+
+  return (
+    <div className="space-y-6">
+      <Alert onClose={() => setError('')}>{error}</Alert>
+      <p className="text-sm text-slate-600">Each QR code opens the campus map with <b>"You are here"</b> set to that place. Print them and put them on the door or wall.
+        Places that are not <b>visible to everyone</b> are shown only to teachers, HODs and admins.</p>
+
+      <div className="overflow-x-auto bg-white rounded-xl border border-slate-200">
+        <h3 className="font-semibold p-3">Buildings</h3>
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="p-2">Name</th><th className="p-2">Latitude</th><th className="p-2">Longitude</th><th className="p-2">Description</th><th className="p-2" /></tr></thead>
+          <tbody>{buildings.map((b) => <BuildingRow key={b.id + b.building_name} b={b} onSaved={load} setError={setError} />)}</tbody>
+        </table>
+      </div>
+
+      <div className="overflow-x-auto bg-white rounded-xl border border-slate-200">
+        <div className="flex items-center justify-between p-3"><h3 className="font-semibold">Rooms and facilities</h3>
+          <button className={`${btn} border border-slate-300 hover:bg-slate-50`} onClick={printAll}>🖨 Print all QR codes</button></div>
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="p-2">Where</th><th className="p-2">Name</th><th className="p-2">Search keywords</th><th className="p-2">Visible to everyone</th><th className="p-2" /></tr></thead>
+          <tbody>{places.map((p) => <PlaceRow key={p.id + p.node_name} p={p} onSaved={load} setError={setError} onQr={setQr} />)}</tbody>
+        </table>
+      </div>
+
+      {qr && (
+        <div className="fixed inset-0 bg-black/50 z-50 grid place-items-center p-4" onClick={() => setQr(null)}>
+          <div className="bg-white rounded-2xl p-5 text-center max-w-xs" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold mb-1">{qr.node_name}</h3>
+            <p className="text-xs text-slate-500 mb-3">{qr.building_name} · floor {qr.floor_number}</p>
+            <QrImage token={qr.qr_code} />
+            <p className="text-xs text-slate-500 mt-2 break-all">{qrUrl(qr.qr_code)}</p>
+            <button className={`${btn} mt-3 bg-indigo-600 text-white`} onClick={() => setQr(null)}>Close</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ Analytics
 function AnalyticsTab() {
   const [data, setData] = useState(null);
@@ -289,6 +398,7 @@ export default function Admin({ onBack }) {
         {tab === 'Documents' && <DocumentsTab />}
         {tab === 'Admissions' && <AdmissionsTab />}
         {tab === 'Notices' && <NoticesTab />}
+        {tab === 'Campus' && <CampusTab />}
         {tab === 'Analytics' && <AnalyticsTab />}
       </div>
     </div>

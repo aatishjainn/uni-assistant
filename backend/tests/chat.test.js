@@ -14,12 +14,14 @@ function fakeClassify(message) {
   const m = message.toLowerCase();
   if (m.includes('trigger500')) return null;                       // simulate AI outage
   let intent = 'unclear';
-  if (m.includes('teaching timetable')) intent = 'teacher_timetable';
+  if (m.includes('generic')) intent = 'general_education';      // a classifier that wrongly says "general question"
+  else if (m.includes('teaching timetable')) intent = 'teacher_timetable';
   else if (m.includes('attendance')) intent = 'student_attendance';
   else if (m.includes('marks')) intent = 'student_marks';
   else if (m.includes('next class')) intent = 'student_next_class';
   else if (m.includes('exam')) intent = 'student_next_exam';
   else if (m.includes('hostel')) intent = 'university_info';
+  else if (m.includes('eligibility')) intent = 'admission_info';
   else if (m.includes('gibberish')) intent = 'made_up_intent';
   return { intent, about_other_person: m.includes('someone else'), day: null };
 }
@@ -151,11 +153,27 @@ test('plain study question skips classification and never touches records', asyn
   assert.strictEqual(calls.answer.length, 0);
 });
 
-test('AI outage during classification -> safe fallback to general chat (no data)', async () => {
+test('AI outage during classification -> an honest "busy" error, never a generic answer about the university', async () => {
   const r = await chat('student1@uni.test', 'my attendance trigger500');
-  assert.strictEqual(r.status, 200);
-  assert.match(r.json.answer, /^GENERAL:/);
+  assert.strictEqual(r.status, 503);
+  assert.match(r.json.error, /busy/i);
   assert.strictEqual(calls.answer.length, 0);
+  assert.strictEqual(calls.chat.length, 0);
+});
+
+test('admission questions still reach the admission records when classification is down', async () => {
+  const r = await chat('student1@uni.test', 'How do I get admission for BCA trigger500');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(calls.answer[0].kind, 'public_records');
+  assert.ok(Array.isArray(JSON.parse(r.json.answer.replace('DATA:', '')).admissions));
+  assert.strictEqual(calls.chat.length, 0);
+});
+
+test('a classifier that wrongly says "general question" cannot send an admission question to generic chat', async () => {
+  const r = await chat('student1@uni.test', 'How do I get admission for BCA generic');
+  assert.strictEqual(calls.answer[0].kind, 'public_records');
+  assert.strictEqual(calls.chat.length, 0);
+  assert.ok(JSON.parse(r.json.answer.replace('DATA:', '')).admissions.some((a) => a.course_name === 'BCA'));
 });
 
 test('AI returns an invented intent -> treated as unclear', async () => {

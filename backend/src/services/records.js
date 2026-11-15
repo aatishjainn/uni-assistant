@@ -21,7 +21,7 @@ async function getAttendance(userId) {
 async function getStudentTimetable(userId) {
   const { rows } = await db.query(
     `SELECT t.day_of_week, t.start_time, t.end_time, sub.subject_name, u.full_name AS teacher,
-            c.room_number, c.floor_number, b.building_name
+            c.id AS classroom_id, c.room_number, c.floor_number, b.building_name
        FROM students s
        JOIN student_enrollments e ON e.student_id = s.id
        JOIN timetables t ON t.subject_id = e.subject_id

@@ -31,6 +31,21 @@ async function authenticate(req, res, next) {
   }
 }
 
+// For public endpoints: a valid token adds req.user (so staff can see staff-only places); otherwise the caller is a visitor.
+async function optionalAuthenticate(req, res, next) {
+  try {
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+    if (scheme === 'Bearer' && token) {
+      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+      const { rows } = await db.query(
+        `SELECT u.id, u.full_name, u.email, r.role_name AS role FROM users u JOIN roles r ON r.id = u.role_id
+          WHERE u.id = $1 AND u.is_active`, [payload.sub]);
+      if (rows[0]) req.user = rows[0];
+    }
+  } catch { /* invalid or expired token: treat as a visitor */ }
+  next();
+}
+
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
@@ -41,4 +56,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { authenticate, requireRole };
+module.exports = { authenticate, optionalAuthenticate, requireRole };

@@ -63,9 +63,9 @@ router.post('/', asyncHandler(async (req, res) => {
     `INSERT INTO chat_messages (session_id, sender, message, source_metadata, created_at) VALUES
        ($1,'user',$2,NULL, clock_timestamp()),
        ($1,'assistant',$3,$4, clock_timestamp() + interval '1 millisecond')`,
-    [sessionIdToUse, message, ai.answer, JSON.stringify({ intent: ai.intent, sources: ai.sources || [] })]);
+    [sessionIdToUse, message, ai.answer, JSON.stringify({ intent: ai.intent, sources: ai.sources || [], ui: ai.ui || null })]);
 
-  res.json({ sessionId: sessionIdToUse, answer: ai.answer, sources: ai.sources || [] });
+  res.json({ sessionId: sessionIdToUse, answer: ai.answer, sources: ai.sources || [], ui: ai.ui || null });
 }));
 
 // List only the caller's conversations

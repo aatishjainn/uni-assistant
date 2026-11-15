@@ -4,6 +4,7 @@
 //  - public tools return approved, university-wide records anyone may ask about
 const records = require('../services/records');
 const { DAY_NAMES } = require('../services/time');
+const campus = require('../services/campus');
 
 const hm = (t) => String(t).slice(0, 5);
 const slot = (r) => ({
@@ -23,6 +24,7 @@ function pickDay(rows, day, now) {
 }
 
 const ALL_ROLES = ['student', 'teacher', 'hod', 'admin', 'applicant', 'visitor'];
+const knownPlaces = (graph, role) => campus.searchPlaces(graph, '', { role, limit: 30 }).map((m) => `${m.place.name} (${m.place.building}, ${m.place.floor_label})`);
 
 const registry = {
   // ---------------- personal records (own data only) ----------------
@@ -46,7 +48,9 @@ const registry = {
       const rows = await records.getStudentTimetable(user.id);
       const upcoming = rows.find((r) => r.day_of_week > now.dow || (r.day_of_week === now.dow && hm(r.start_time) > now.time));
       const next = upcoming || rows[0] || null;   // wrap to next week's first class
-      return { now: `${DAY_NAMES[now.dow]} ${now.time}`, next_class: next ? slot(next) : null };
+      const place = next ? await campus.nodeForClassroom(next.classroom_id) : null;
+      return { now: `${DAY_NAMES[now.dow]} ${now.time}`, next_class: next ? slot(next) : null,
+        ...(place ? { _ui: { map: { to: place.id } } } : {}) };
     },
   },
   student_next_exam: {
@@ -84,7 +88,7 @@ const registry = {
   // ---------------- public university records (approved data; every role) ----------------
   admission_info: {
     kind: 'public_records', personal: false, roles: ALL_ROLES,
-    description: 'Official admission records: courses open for admission, eligibility, admission fee, last date/deadline, required documents, how to apply online, scholarships, admission office contact.',
+    description: "Official admission records and the admission process of THIS university: how to get admission or apply (including online), courses open for admission, eligibility, admission fee, last date/deadline, required documents, scholarships, admission office contact.",
     run: async ({ now }) => ({ today: now.date, admissions: await records.getAdmissions() }),
   },
   department_info: {
@@ -97,11 +101,60 @@ const registry = {
     description: 'Latest published university notices and announcements.',
     run: async ({ now }) => ({ today: now.date, notices: await records.getNotices() }),
   },
+  campus_location: {
+    kind: 'public_records', personal: false, roles: ALL_ROLES,
+    description: 'Where a room, lab, classroom, office, hall, library or other campus facility is (building and floor) and how to reach it from the main gate. Use for "where is ...".',
+    run: async ({ user }, { place, message }) => {
+      const graph = await campus.loadGraph();
+      const hit = campus.resolvePlace(graph, place || message, user.role);
+      if (!hit) return { found: false, searched_for: place || null, known_places: knownPlaces(graph, user.role) };
+      const gate = campus.gateNode(graph);
+      const r = gate && gate.id !== hit.best.id ? await campus.route(gate.id, hit.best.id, { role: user.role }) : null;
+      const describePlace = (p) => ({ name: p.name, type: p.type, building: p.building, floor: p.floor_label });
+      return {
+        found: true, ambiguous: hit.ambiguous, best_match: describePlace(hit.best),
+        other_possible_matches: hit.alternatives.map(describePlace),
+        route_from_main_gate: r && !r.error ? { distance_m: r.distance_m, minutes: r.minutes, steps: r.steps.map((s) => s.text) } : null,
+        note: 'A visual route and floor plan are available on the Campus map.',
+        _ui: { map: { to: hit.best.id } },
+      };
+    },
+  },
+  campus_route: {
+    kind: 'public_records', personal: false, roles: ALL_ROLES,
+    description: 'Walking directions between two places on campus ("how do I get from the library to Room 201", "directions to the examination department"), including step-free routes.',
+    run: async ({ user }, { place, from_place, message }) => {
+      const graph = await campus.loadGraph();
+      const to = campus.resolvePlace(graph, place || message, user.role);
+      if (!to) return { found: false, missing: 'destination', searched_for: place || null, known_places: knownPlaces(graph, user.role) };
+      let from, assumedStart = false;
+      if (from_place) {
+        const f = campus.resolvePlace(graph, from_place, user.role);
+        if (!f) return { found: false, missing: 'starting point', searched_for: from_place, known_places: knownPlaces(graph, user.role) };
+        from = f.best;
+      } else {
+        const gate = campus.gateNode(graph);
+        if (!gate) return { found: false, reason: 'No starting point is available' };
+        from = campus.publicNode(gate);
+        assumedStart = true;
+      }
+      const accessible = /wheelchair|step[- ]free|accessible|elevator|lift only|without stairs/i.test(message || '');
+      const r = await campus.route(from.id, to.best.id, { role: user.role, accessible });
+      if (r.error) return { found: false, reason: r.error === 'no_route' ? 'No walkable route is stored for these two places' : 'Place not found' };
+      const brief = (p) => ({ name: p.name, building: p.building, floor: p.floor_label });
+      return {
+        found: true, start: brief(from), destination: brief(to.best), assumed_start_is_main_gate: assumedStart, step_free_route: accessible,
+        ambiguous_destination: to.ambiguous, other_possible_destinations: to.alternatives.map(brief),
+        distance_m: r.distance_m, minutes: r.minutes, steps: r.steps.map((s) => s.text),
+        _ui: { map: { from: from.id, to: to.best.id, accessible } },
+      };
+    },
+  },
 };
 
 // Intents that are not database tools
 const META = {
-  general_education: 'General education or study question that needs no university records (concepts, MCQs, project ideas, explanations).',
+  general_education: "General education or study question that needs no university records (concepts, MCQs, project ideas, explanations). NOT for questions about this university's own admissions, fees, rooms, rules or schedules.",
   university_info: 'Questions answered from approved university documents: syllabus, examination procedures, hostel, library, transport, placements, policies, grievances, certificates, events, academic calendar.',
   unclear: 'The message is unclear, off-topic or does not match any other intent.',
 };

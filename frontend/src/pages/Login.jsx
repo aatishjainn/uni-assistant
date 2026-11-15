@@ -4,7 +4,7 @@ import { api, setToken } from '../api.js';
 // Demo accounts exist only because we seed DUMMY data. Remove this box before any real deployment.
 const DEMO = ['student1@uni.test', 'student2@uni.test', 'teacher@uni.test', 'hod@uni.test', 'admin@uni.test'];
 
-export default function Login({ onLoggedIn }) {
+export default function Login({ onLoggedIn, onMap }) {
   const [mode, setMode] = useState('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -71,6 +71,10 @@ export default function Login({ onLoggedIn }) {
             {mode === 'login' ? 'New applicant? Create an account' : 'Already have an account? Sign in'}
           </button>
         </form>
+
+        <button type="button" onClick={onMap} className="mt-4 w-full rounded-xl border border-indigo-200 bg-white hover:bg-indigo-50 text-indigo-700 font-medium py-2">
+          🗺 Campus map (no sign-in needed)
+        </button>
 
         <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
           <div className="font-medium text-amber-900 mb-1">Demo accounts (dummy data)</div>

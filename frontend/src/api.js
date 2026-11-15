@@ -57,4 +57,15 @@ export const api = {
   createNotice: (fields) => request('/admin/notices', { method: 'POST', body: fields }),
   setNoticePublished: (id, is_published) => request(`/admin/notices/${id}`, { method: 'PATCH', body: { is_published } }),
   analytics: () => request('/admin/analytics'),
+  adminBuildings: () => request('/admin/campus/buildings'),
+  saveBuilding: (id, fields) => request(`/admin/campus/buildings/${id}`, { method: 'PUT', body: fields }),
+  adminPlaces: () => request('/admin/campus/places'),
+  savePlace: (id, fields) => request(`/admin/campus/places/${id}`, { method: 'PUT', body: fields }),
+
+  // ---- campus map (public: no account needed) ----
+  campusBuildings: () => request('/campus/buildings'),
+  campusPlaces: (q = '') => request(`/campus/places?q=${encodeURIComponent(q)}`),
+  campusFloor: (buildingId, floor) => request(`/campus/floor/${buildingId}/${floor}`),
+  campusRoute: (from, to, accessible) => request(`/campus/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&accessible=${accessible ? 'true' : 'false'}`),
+  campusQr: (token) => request(`/campus/qr/${encodeURIComponent(token)}`),
 };

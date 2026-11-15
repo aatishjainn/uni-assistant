@@ -9,7 +9,7 @@ const SUGGESTIONS = [
   'Suggest final-year project ideas',
 ];
 
-export default function Chat({ user, onLogout, onAdmin }) {
+export default function Chat({ user, onLogout, onAdmin, onMap }) {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);   // {role: 'user'|'assistant', text}
@@ -38,7 +38,7 @@ export default function Chat({ user, onLogout, onAdmin }) {
     try {
       const r = await api.session(id);
       setActiveId(id);
-      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message, sources: m.source_metadata?.sources || [] })));
+      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message, sources: m.source_metadata?.sources || [], ui: m.source_metadata?.ui || null })));
     } catch (e) {
       setError(e.message);
     }
@@ -64,7 +64,7 @@ export default function Chat({ user, onLogout, onAdmin }) {
     setLoading(true);
     try {
       const r = await api.chat(message, activeId, mode);
-      setMessages((m) => [...m, { role: 'assistant', text: r.answer, sources: r.sources || [] }]);
+      setMessages((m) => [...m, { role: 'assistant', text: r.answer, sources: r.sources || [], ui: r.ui || null }]);
       if (!activeId) { setActiveId(r.sessionId); loadSessions(); }
     } catch (e) {
       setError(e.message);
@@ -104,6 +104,7 @@ export default function Chat({ user, onLogout, onAdmin }) {
         <div className="p-3 border-t border-slate-700 text-sm">
           <div className="font-medium truncate">{user.full_name}</div>
           <div className="text-slate-400 capitalize mb-2">{user.role}</div>
+          <button onClick={() => onMap()} className="block mb-2 w-full rounded-lg border border-slate-600 hover:bg-slate-800 py-1.5 font-medium">🗺 Campus map</button>
           {user.role === 'admin' && (
             <button onClick={onAdmin} className="block mb-2 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 py-1.5 font-medium">⚙ Admin panel</button>
           )}
@@ -140,7 +141,7 @@ export default function Chat({ user, onLogout, onAdmin }) {
                 </div>
               </div>
             )}
-            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} sources={m.sources} />)}
+            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} sources={m.sources} ui={m.ui} onMap={onMap} />)}
             {loading && <TypingIndicator />}
             <div ref={bottomRef} />
           </div>

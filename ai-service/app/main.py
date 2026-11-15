@@ -121,9 +121,17 @@ class AnswerRequest(BaseModel):
     kind: Literal["personal", "public_records", "documents"] = "personal"
 
 
+def clean_place(value) -> str | None:
+    """A place name is only ever used for matching, but still keep it short and free of control characters."""
+    if not isinstance(value, str):
+        return None
+    text = "".join(ch for ch in value if ch.isprintable()).strip()
+    return text[:100] or None
+
+
 def parse_classification(text: str, valid: set[str]) -> dict:
     """Never trust model output: anything unexpected becomes 'unclear'."""
-    fallback = {"intent": "unclear", "about_other_person": False, "day": None}
+    fallback = {"intent": "unclear", "about_other_person": False, "day": None, "place": None, "from_place": None}
     cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         obj = json.loads(cleaned)
@@ -139,6 +147,8 @@ def parse_classification(text: str, valid: set[str]) -> dict:
         "intent": intent,
         "about_other_person": obj.get("about_other_person") is True,
         "day": day if day in DAYS else None,
+        "place": clean_place(obj.get("place")),
+        "from_place": clean_place(obj.get("from_place")),
     }
 
 

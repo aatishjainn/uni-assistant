@@ -10,6 +10,7 @@ const audit = require('../audit');
 const asyncHandler = require('../middleware/asyncHandler');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { processDocument, removeFile } = require('../services/documents');
+const campus = require('../services/campus');
 
 router.use(authenticate, requireRole('admin'));
 
@@ -190,6 +191,80 @@ router.patch('/notices/:id', asyncHandler(async (req, res) => {
     [req.params.id, parsed.data.is_published]);
   if (!rowCount) return res.status(404).json({ error: 'Notice not found' });
   await audit(req.user.id, 'notice_update', 'notice', req.params.id, parsed.data);
+  res.json({ ok: true });
+}));
+
+// ---------------------------------------------------------------- campus (buildings, places, QR codes)
+router.get('/campus/buildings', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT id, building_name, latitude, longitude, description FROM buildings ORDER BY building_name');
+  res.json({ buildings: rows });
+}));
+
+const buildingSchema = z.object({
+  building_name: z.string().trim().min(1).max(100).optional(),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+  description: z.preprocess(emptyToNull, z.string().trim().max(500).nullable().optional()),
+}).strict();
+
+router.put('/campus/buildings/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = buildingSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const sets = []; const params = [req.params.id];
+  for (const [col, val] of Object.entries(parsed.data)) {
+    if (val !== undefined) { params.push(val); sets.push(`${col} = $${params.length}`); }
+  }
+  if (!sets.length) return bad(res, 'Nothing to update');
+  const { rowCount } = await db.query(`UPDATE buildings SET ${sets.join(', ')} WHERE id = $1`, params);
+  if (!rowCount) return res.status(404).json({ error: 'Building not found' });
+  campus.invalidate();
+  await audit(req.user.id, 'building_update', 'building', req.params.id, parsed.data);
+  res.json({ ok: true });
+}));
+
+router.get('/campus/places', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT n.id, n.node_name, n.node_type, n.floor_number, n.qr_code, n.keywords, n.is_public, b.building_name
+       FROM navigation_nodes n JOIN buildings b ON b.id = n.building_id
+      WHERE n.node_type IN ('room','entrance') ORDER BY b.building_name, n.floor_number, n.node_name`);
+  res.json({ places: rows });
+}));
+
+const placeSchema = z.object({
+  node_name: z.string().trim().min(1).max(100).optional(),
+  keywords: z.preprocess(emptyToNull, z.string().trim().max(300).nullable().optional()),
+  is_public: z.boolean().optional(),
+}).strict();
+
+router.put('/campus/places/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = placeSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const p = parsed.data;
+  const sets = []; const params = [req.params.id];
+  for (const col of ['node_name', 'keywords', 'is_public']) {
+    if (p[col] !== undefined) { params.push(p[col]); sets.push(`${col} = $${params.length}`); }
+  }
+  if (!sets.length) return bad(res, 'Nothing to update');
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE navigation_nodes SET ${sets.join(', ')} WHERE id = $1 AND node_type IN ('room','entrance') RETURNING classroom_id`, params);
+    if (!rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Place not found' }); }
+    // keep the room name used by timetables and exams in step with the map
+    if (p.node_name && rows[0].classroom_id) await client.query('UPDATE classrooms SET room_number = $2 WHERE id = $1', [rows[0].classroom_id, p.node_name]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    if (e.code === '23505') return res.status(409).json({ error: 'Another room in this building already has that name' });
+    throw e;
+  } finally {
+    client.release();
+  }
+  campus.invalidate();
+  await audit(req.user.id, 'place_update', 'navigation_node', req.params.id, p);
   res.json({ ok: true });
 }));
 

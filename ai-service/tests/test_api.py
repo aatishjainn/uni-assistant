@@ -157,3 +157,17 @@ def test_no_fallback_on_real_errors():
     finally:
         settings.gemini_chat_model, settings.gemini_fallback_models = old
     assert raised and calls == ["a"]
+
+
+def test_classify_place_params_are_cleaned():
+    r = classify('{"intent": "student_attendance", "place": "  Computer Lab 1 ", "from_place": "library"}')
+    assert r.json()["place"] == "Computer Lab 1" and r.json()["from_place"] == "library"
+    r = classify('{"intent": "student_attendance", "place": 42, "from_place": "' + "x" * 500 + '"}')
+    assert r.json()["place"] is None and len(r.json()["from_place"]) == 100
+    r = classify('{"intent": "student_attendance", "place": "lab\\u0000\\n1"}')
+    assert "\x00" not in r.json()["place"] and "\n" not in r.json()["place"]
+
+
+def test_directions_prompt_forbids_invented_steps():
+    from app.prompts import answer_system_prompt
+    assert "never add steps" in answer_system_prompt("A", "student", "public_records")

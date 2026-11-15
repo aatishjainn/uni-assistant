@@ -8,7 +8,10 @@ const retrieval = require('./retrieval');
 const { nowInTz } = require('./time');
 const { registry, META, catalog } = require('../tools');
 
-const PERSONAL_HINT = /\b(my|me|mine|i|i'm|attendance|timetable|schedule|exams?|marks|grades?|results?|class|classes|classroom|lab|room|semester|subjects?|teach|teaching|assigned|faculty|hod|head|department|admissions?|admit|apply|application|eligib\w*|eligible|fees?|deadline|last date|courses?|documents?|contact|scholarships?|hostel|library|campus|notices?|announcements?|leave|id card|students?|syllabus|policy|policies|rules?|procedure|procedures|grievance|placements?|internships?|transport|certificates?|transcripts?|events?|calendar|where)\b/i;
+const PERSONAL_HINT = /\b(my|me|mine|i|i'm|attendance|timetable|schedule|exams?|marks|grades?|results?|class|classes|classroom|lab|room|semester|subjects?|teach|teaching|assigned|faculty|hod|head|department|admissions?|admit|apply|application|eligib\w*|eligible|fees?|deadline|last date|courses?|documents?|contact|scholarships?|hostel|library|campus|notices?|announcements?|leave|id card|students?|syllabus|policy|policies|rules?|procedure|procedures|grievance|placements?|internships?|transport|certificates?|transcripts?|events?|calendar|where|route|directions?|reach|map|navigate|building|floor|gate|canteen|cafeteria|block|located|location|office|wheelchair)\b/i;
+// Words that clearly mean "this university's admissions". The AI classifier can be wrong or unavailable, so these are
+// a second opinion: such a question is never answered with generic advice.
+const ADMISSION_WORDS = /\b(admissions?|eligib\w*|scholarships?)\b/i;
 const DAYS = new Set(['today', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'week']);
 
 const MSG = {
@@ -66,6 +69,8 @@ async function handleMessage({ user, message, history, mode, lastIntent }) {
   let intent = 'general_education';
   let aboutOther = false;
   let day = null;
+  let place = null;
+  let fromPlace = null;
   const valid = new Set(catalog().map((c) => c.name));
   const continuing = Boolean(registry[lastIntent]) || lastIntent === 'university_info';
 
@@ -76,11 +81,18 @@ async function handleMessage({ user, message, history, mode, lastIntent }) {
       intent = valid.has(c.intent) ? c.intent : 'unclear';
       aboutOther = c.about_other_person === true;
       day = DAYS.has(c.day) ? c.day : null;
+      place = typeof c.place === 'string' ? c.place.slice(0, 100) : null;
+      fromPlace = typeof c.from_place === 'string' ? c.from_place.slice(0, 100) : null;
     } catch (err) {
       console.error('classification failed:', err.message);
-      intent = 'general_education';       // safe fallback: general chat has no access to records
+      // Do NOT quietly give a generic answer to a question about this university: that looks like a real answer but is not.
+      if (ADMISSION_WORDS.test(message)) intent = 'admission_info';
+      else throw new Error('classification unavailable');       // the chat route turns this into "assistant is busy, try again"
     }
   }
+
+  // The classifier said "general question", but the message is clearly about this university's admissions
+  if (intent === 'general_education' && ADMISSION_WORDS.test(message)) intent = 'admission_info';
 
   // Short vague follow-ups ("is that all?", "and tomorrow?") continue the previous topic.
   // The role check and the other-person check below still apply to the reused intent.
@@ -95,12 +107,13 @@ async function handleMessage({ user, message, history, mode, lastIntent }) {
     if (tool.personal && (aboutOther || (await mentionsOtherPerson(message, user.id)))) {
       return refuse(user, intent, 'other_person', message, MSG.other);
     }
-    const data = await tool.run({ user, now: nowInTz(config.tz) }, { day });
+    const result = await tool.run({ user, now: nowInTz(config.tz) }, { day, place, from_place: fromPlace, message });
+    const { _ui: ui, ...data } = result;          // _ui is for the app (e.g. "show on map"), never sent to the AI
     const out = await ai.answer({
       kind: tool.kind, message, history: clip(history, 6), data,
       user: { first_name: firstName(user), role: user.role },
     });
-    return { answer: out.answer, intent, sources: [] };
+    return { answer: out.answer, intent, sources: [], ui: ui || null };
   }
 
   const out = await ai.chat(message, clip(history, 20), mode);
