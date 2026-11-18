@@ -13,7 +13,7 @@ H = {"X-Service-Token": "test-token"}
 
 
 class EmbedOK(LLMProvider):
-    async def generate(self, system, history, message, json_mode=False):
+    async def generate(self, system, history, message, json_mode=False, model=None):
         return "x"
 
     async def embed(self, texts, task="document"):
@@ -116,3 +116,4 @@ def test_answer_kinds_use_different_rules(client):
     assert "numbered excerpts" in answer_system_prompt("A", "student", "documents")
     assert "official, approved" in answer_system_prompt("A", "student", "public_records")
     assert "own record" in answer_system_prompt("A", "student", "personal")
+    assert "own department" in answer_system_prompt("A", "hod", "department_records")

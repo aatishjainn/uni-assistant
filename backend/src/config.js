@@ -23,6 +23,11 @@ module.exports = {
   // Share of the question's key terms a chunk must contain to count as a keyword match
   ragMinTermMatch: Number(process.env.RAG_MIN_TERM_MATCH || 0.6),
   ragMinSimilarity: Number(process.env.RAG_MIN_SIMILARITY || 0.6),
+  // Agent mode: hard limits on autonomy
+  agentMaxSteps: Number(process.env.AGENT_MAX_STEPS || 5),
+  agentMaxToolCalls: Number(process.env.AGENT_MAX_TOOL_CALLS || 6),
+  agentTimeoutMs: Number(process.env.AGENT_TIMEOUT_MS || 60000),
+  agentRunsPerMinute: Number(process.env.AGENT_RUNS_PER_MINUTE || 5),
   chatRateLimit: Number(process.env.CHAT_RATE_LIMIT || 15),
   // Either one DATABASE_URL (hosted DB such as Neon) or the separate DB_* values (local DB)
   db: process.env.DATABASE_URL

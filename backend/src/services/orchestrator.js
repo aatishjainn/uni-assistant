@@ -5,6 +5,7 @@ const audit = require('../audit');
 const config = require('../config');
 const ai = require('./ai');
 const retrieval = require('./retrieval');
+const agentRunner = require('./agent');
 const { nowInTz } = require('./time');
 const { registry, META, catalog } = require('../tools');
 
@@ -65,7 +66,17 @@ async function answerFromDocuments({ user, message, history }) {
   return { answer: out.answer, intent: 'university_info', sources };
 }
 
-async function handleMessage({ user, message, history, mode, lastIntent }) {
+// Agent mode: the model plans and calls tools step by step (see services/agent.js)
+async function runAgentFor({ user, message, history }) {
+  // the same deterministic guard as for single tools: a request naming another person never reaches personal-data tools
+  const hasPersonalTools = Object.values(registry).some((t) => t.personal && t.roles.includes(user.role));
+  if (hasPersonalTools && (await mentionsOtherPerson(message, user.id))) return refuse(user, 'agent', 'other_person', message, MSG.other);
+  return agentRunner.runAgent({ user, message, history, now: nowInTz(config.tz) });
+}
+
+async function handleMessage({ user, message, history, mode, lastIntent, agent = false }) {
+  if (agent) return runAgentFor({ user, message, history });      // the user switched on agent mode: no classification needed
+
   let intent = 'general_education';
   let aboutOther = false;
   let day = null;
@@ -99,6 +110,7 @@ async function handleMessage({ user, message, history, mode, lastIntent }) {
   if (intent === 'unclear' && continuing && message.length <= 80) intent = lastIntent;
 
   if (intent === 'unclear') return { answer: MSG.unclear, intent, sources: [] };
+  if (intent === 'agent_task') return runAgentFor({ user, message, history });
   if (intent === 'university_info') return answerFromDocuments({ user, message, history });
 
   const tool = registry[intent];

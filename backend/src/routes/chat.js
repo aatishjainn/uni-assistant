@@ -19,12 +19,13 @@ const chatSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   sessionId: uuid.optional(),
   mode: z.enum(['simple', 'detailed']).default('simple'),
+  agent: z.boolean().default(false),
 });
 
 router.post('/', asyncHandler(async (req, res) => {
   const parsed = chatSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Message is required (max 4000 characters)' });
-  const { message, sessionId, mode } = parsed.data;
+  const { message, sessionId, mode, agent } = parsed.data;
 
   let sessionIdToUse = sessionId;
   let isNew = false;
@@ -52,10 +53,11 @@ router.post('/', asyncHandler(async (req, res) => {
 
   let ai;
   try {
-    ai = await handleMessage({ user: req.user, message, history, mode, lastIntent });
+    ai = await handleMessage({ user: req.user, message, history, mode, lastIntent, agent });
   } catch (err) {
     console.error('AI call failed:', err.message);
     if (isNew) await db.query('DELETE FROM chat_sessions WHERE id = $1', [sessionIdToUse]);
+    if (err.status === 429) return res.status(429).json({ error: err.userMessage });
     return res.status(503).json({ error: 'The assistant is busy right now. Please try again in a moment.' });
   }
 
@@ -63,9 +65,9 @@ router.post('/', asyncHandler(async (req, res) => {
     `INSERT INTO chat_messages (session_id, sender, message, source_metadata, created_at) VALUES
        ($1,'user',$2,NULL, clock_timestamp()),
        ($1,'assistant',$3,$4, clock_timestamp() + interval '1 millisecond')`,
-    [sessionIdToUse, message, ai.answer, JSON.stringify({ intent: ai.intent, sources: ai.sources || [], ui: ai.ui || null })]);
+    [sessionIdToUse, message, ai.answer, JSON.stringify({ intent: ai.intent, sources: ai.sources || [], ui: ai.ui || null, ...(ai.trace ? { trace: ai.trace } : {}) })]);
 
-  res.json({ sessionId: sessionIdToUse, answer: ai.answer, sources: ai.sources || [], ui: ai.ui || null });
+  res.json({ sessionId: sessionIdToUse, answer: ai.answer, sources: ai.sources || [], ui: ai.ui || null, trace: ai.trace || null });
 }));
 
 // List only the caller's conversations

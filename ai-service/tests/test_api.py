@@ -9,7 +9,7 @@ from app.providers.base import LLMProvider
 class Fake(LLMProvider):
     reply = None  # tests can set a fixed reply
 
-    async def generate(self, system, history, message, json_mode=False):
+    async def generate(self, system, history, message, json_mode=False, model=None):
         return Fake.reply if Fake.reply is not None else f"echo:{message}"
 
     async def embed(self, texts):

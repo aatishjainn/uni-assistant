@@ -123,7 +123,8 @@ const registry = {
   campus_route: {
     kind: 'public_records', personal: false, roles: ALL_ROLES,
     description: 'Walking directions between two places on campus ("how do I get from the library to Room 201", "directions to the examination department"), including step-free routes.',
-    run: async ({ user }, { place, from_place, message }) => {
+    run: async ({ user }, params) => {
+      const { place, from_place, message } = params;
       const graph = await campus.loadGraph();
       const to = campus.resolvePlace(graph, place || message, user.role);
       if (!to) return { found: false, missing: 'destination', searched_for: place || null, known_places: knownPlaces(graph, user.role) };
@@ -138,7 +139,7 @@ const registry = {
         from = campus.publicNode(gate);
         assumedStart = true;
       }
-      const accessible = /wheelchair|step[- ]free|accessible|elevator|lift only|without stairs/i.test(message || '');
+      const accessible = params.step_free === true || /wheelchair|step[- ]free|accessible|elevator|lift only|without stairs/i.test(message || '');
       const r = await campus.route(from.id, to.best.id, { role: user.role, accessible });
       if (r.error) return { found: false, reason: r.error === 'no_route' ? 'No walkable route is stored for these two places' : 'Place not found' };
       const brief = (p) => ({ name: p.name, building: p.building, floor: p.floor_label });
@@ -156,6 +157,7 @@ const registry = {
 const META = {
   general_education: "General education or study question that needs no university records (concepts, MCQs, project ideas, explanations). NOT for questions about this university's own admissions, fees, rooms, rules or schedules.",
   university_info: 'Questions answered from approved university documents: syllabus, examination procedures, hostel, library, transport, placements, policies, grievances, certificates, events, academic calendar.',
+  agent_task: "A request that needs several pieces of information or steps combined: a comparison, a plan, or an analysis across the user's records and university information (for example 'what is my attendance and where is my next class', 'which subjects am I at risk in and when are those exams', 'plan my day').",
   unclear: 'The message is unclear, off-topic or does not match any other intent.',
 };
 

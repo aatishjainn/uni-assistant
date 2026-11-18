@@ -32,6 +32,7 @@ module.exports = {
   chat: (message, history, mode) => post('/ai/chat', { message, history, mode }),
   classify: (message, recent, intents) => post('/ai/classify', { message, recent, intents }, 25000),
   answer: (payload) => post('/ai/answer', payload),
+  agentStep: (payload) => post('/ai/agent/step', payload, 40000),
   embed: (texts, task = 'document') => post('/ai/embed', { texts, task }, 30000),
   ingest,
 };

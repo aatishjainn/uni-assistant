@@ -39,8 +39,8 @@ export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
   register: (full_name, email, password) => request('/auth/register', { method: 'POST', body: { full_name, email, password } }),
   me: () => request('/auth/me'),
-  chat: (message, sessionId, mode) =>
-    request('/chat', { method: 'POST', body: { message, mode, ...(sessionId ? { sessionId } : {}) } }),
+  chat: (message, sessionId, mode, agent = false) =>
+    request('/chat', { method: 'POST', body: { message, mode, ...(agent ? { agent: true } : {}), ...(sessionId ? { sessionId } : {}) } }),
   sessions: () => request('/chat/sessions'),
   session: (id) => request(`/chat/sessions/${id}`),
   deleteSession: (id) => request(`/chat/sessions/${id}`, { method: 'DELETE' }),

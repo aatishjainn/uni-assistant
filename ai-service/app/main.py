@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import secrets
 from typing import Literal
 
@@ -8,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from .config import settings
 from .prompts import (GENERATE_TEMPLATES, chat_system_prompt, BASE_RULES,
-                      classify_system_prompt, answer_system_prompt)
+                      classify_system_prompt, answer_system_prompt, agent_system_prompt, agent_user_prompt)
 from .ingest import IngestError, extract_and_chunk
 from .providers.base import LLMProvider
 
@@ -118,7 +119,7 @@ class AnswerRequest(BaseModel):
     history: list[HistoryItem] = []
     data: dict | list
     user: UserContext
-    kind: Literal["personal", "public_records", "documents"] = "personal"
+    kind: Literal["personal", "public_records", "documents", "department_records"] = "personal"
 
 
 def clean_place(value) -> str | None:
@@ -200,3 +201,72 @@ async def ingest(file: UploadFile = File(...), kind: Literal["pdf", "docx"] = Fo
                     "embedding": embeddings[i] if embeddings else None} for i, c in enumerate(chunks)],
         "embedding_error": embedding_error,
     }
+
+
+# ---------------------------------------------------------------- agent planning step
+class AgentToolDoc(BaseModel):
+    name: str = Field(pattern=r"^[a-z_]{1,60}$")
+    description: str = Field(max_length=400)
+    args: str = Field(default="{}", max_length=400)
+
+
+class Observation(BaseModel):
+    tool: str = Field(max_length=60)
+    args: dict = {}
+    ok: bool = True
+    result: dict | list | None = None
+    error: str | None = Field(default=None, max_length=600)
+
+
+class AgentStepRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=settings.max_message_chars)
+    history: list[HistoryItem] = []
+    tools: list[AgentToolDoc] = Field(max_length=30)
+    observations: list[Observation] = Field(default=[], max_length=20)
+    step: int = Field(ge=1, le=10)
+    max_steps: int = Field(ge=1, le=10)
+    force_final: bool = False
+    hint: str | None = Field(default=None, max_length=600)
+    user: UserContext
+
+
+MAX_CALLS_PER_STEP = 3
+TOOL_NAME = re.compile(r"^[a-z_]{1,60}$")
+
+
+def parse_plan(text: str, force_final: bool) -> dict | None:
+    """Turn the model's reply into a plan. Anything malformed returns None; the backend decides what happens next."""
+    cleaned = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        obj = json.loads(cleaned)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    thought = obj.get("thought")
+    thought = thought.strip()[:300] if isinstance(thought, str) else ""
+    final = obj.get("final")
+    if isinstance(final, str) and final.strip():
+        return {"thought": thought, "calls": [], "final": final.strip()[:6000]}
+    if force_final:
+        return None                       # told to answer, but did not
+    calls = []
+    for c in obj.get("calls") or []:
+        if not isinstance(c, dict) or not isinstance(c.get("tool"), str) or not TOOL_NAME.match(c["tool"]):
+            continue
+        args = c.get("args") if isinstance(c.get("args"), dict) else {}
+        calls.append({"tool": c["tool"], "args": args})
+    if not calls:
+        return None
+    return {"thought": thought, "calls": calls[:MAX_CALLS_PER_STEP], "final": None}
+
+
+@app.post("/ai/agent/step", dependencies=[Depends(require_service_token)])
+async def agent_step(req: AgentStepRequest, provider: LLMProvider = Depends(get_provider)):
+    system = agent_system_prompt(req.user.first_name, req.user.role, req.tools, req.step, req.max_steps, req.force_final)
+    prompt = agent_user_prompt(req.question, req.history, req.observations, req.hint)
+    text = await _call(provider.generate(system, [], prompt, json_mode=True, model=settings.gemini_agent_model or None))
+    plan = parse_plan(text, req.force_final)
+    if plan is None:
+        raise HTTPException(status_code=502, detail="The planner returned an invalid plan")
+    return plan

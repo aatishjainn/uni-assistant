@@ -15,6 +15,7 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
   const [messages, setMessages] = useState([]);   // {role: 'user'|'assistant', text}
   const [input, setInput] = useState('');
   const [mode, setMode] = useState('simple');
+  const [agent, setAgent] = useState(false);          // agent mode: the assistant plans and uses several tools
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -38,7 +39,7 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
     try {
       const r = await api.session(id);
       setActiveId(id);
-      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message, sources: m.source_metadata?.sources || [], ui: m.source_metadata?.ui || null })));
+      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message, sources: m.source_metadata?.sources || [], ui: m.source_metadata?.ui || null, trace: m.source_metadata?.trace || null })));
     } catch (e) {
       setError(e.message);
     }
@@ -63,8 +64,8 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
     setMessages((m) => [...m, { role: 'user', text: message }]);
     setLoading(true);
     try {
-      const r = await api.chat(message, activeId, mode);
-      setMessages((m) => [...m, { role: 'assistant', text: r.answer, sources: r.sources || [], ui: r.ui || null }]);
+      const r = await api.chat(message, activeId, mode, agent);
+      setMessages((m) => [...m, { role: 'assistant', text: r.answer, sources: r.sources || [], ui: r.ui || null, trace: r.trace || null }]);
       if (!activeId) { setActiveId(r.sessionId); loadSessions(); }
     } catch (e) {
       setError(e.message);
@@ -118,6 +119,11 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
         <header className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3">
           <button className="md:hidden text-xl" onClick={() => setSidebarOpen(true)} aria-label="Open menu">☰</button>
           <h1 className="font-semibold flex-1 truncate">🎓 University Smart Assistant</h1>
+          <button onClick={() => setAgent(!agent)} aria-pressed={agent}
+            title="Agent mode: the assistant plans, uses several tools and checks its answer. Slower, and uses more AI requests."
+            className={`rounded-lg border px-3 py-1 text-sm font-medium ${agent ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 hover:bg-slate-100'}`}>
+            🤖 Agent {agent ? 'on' : 'off'}
+          </button>
           <div className="flex rounded-lg border border-slate-300 overflow-hidden text-sm" role="group" aria-label="Explanation mode">
             {['simple', 'detailed'].map((m) => (
               <button key={m} onClick={() => setMode(m)}
@@ -141,8 +147,8 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
                 </div>
               </div>
             )}
-            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} sources={m.sources} ui={m.ui} onMap={onMap} />)}
-            {loading && <TypingIndicator />}
+            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} sources={m.sources} ui={m.ui} trace={m.trace} onMap={onMap} />)}
+            {loading && <TypingIndicator label={agent ? 'Agent is working…' : 'Assistant is typing'} />}
             <div ref={bottomRef} />
           </div>
         </div>
