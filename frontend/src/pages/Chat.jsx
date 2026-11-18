@@ -1,36 +1,80 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import MessageBubble, { TypingIndicator } from '../components/MessageBubble.jsx';
+import {
+  GraduationCap,
+  Plus,
+  MessageSquare,
+  Trash2,
+  Compass,
+  ShieldCheck,
+  LogOut,
+  Bot,
+  Sliders,
+  Send,
+  Sparkles,
+  BookOpen,
+  Calendar,
+  Layers,
+  MapPin,
+  Clock,
+  Menu,
+  X,
+  ChevronRight,
+} from '../components/Icons.jsx';
 
-const SUGGESTIONS = [
-  'What is Artificial Intelligence?',
-  'Explain database normalization',
-  'Generate 10 DBMS MCQs',
-  'Suggest final-year project ideas',
+const PROMPT_CATEGORIES = [
+  {
+    category: 'Study & Explanations',
+    icon: BookOpen,
+    prompts: [
+      { label: 'Explain Database Normalization', query: 'Explain 1NF, 2NF and 3NF with a simple practical example.' },
+      { label: 'Generate 10 Practice MCQs', query: 'Generate 10 multiple-choice questions on Database Management Systems.' },
+    ],
+  },
+  {
+    category: 'My Records & Navigation',
+    icon: Calendar,
+    prompts: [
+      { label: 'Attendance & Next Class', query: 'What is my current attendance percentage and where is my next class?' },
+      { label: 'Campus Directions', query: 'Where is Computer Lab 1 and how do I get there from the main gate?' },
+    ],
+  },
 ];
 
 export default function Chat({ user, onLogout, onAdmin, onMap }) {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
-  const [messages, setMessages] = useState([]);   // {role: 'user'|'assistant', text}
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [mode, setMode] = useState('simple');
-  const [agent, setAgent] = useState(false);          // agent mode: the assistant plans and uses several tools
+  const [agent, setAgent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const bottomRef = useRef(null);
+  const textareaRef = useRef(null);
 
-  const loadSessions = () => api.sessions().then((r) => setSessions(r.sessions)).catch(() => {});
+  const loadSessions = () =>
+    api
+      .sessions()
+      .then((r) => setSessions(r.sessions))
+      .catch(() => {});
 
-  useEffect(() => { loadSessions(); }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
   function newChat() {
     setActiveId(null);
     setMessages([]);
     setError('');
     setSidebarOpen(false);
+    textareaRef.current?.focus();
   }
 
   async function openSession(id) {
@@ -39,14 +83,23 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
     try {
       const r = await api.session(id);
       setActiveId(id);
-      setMessages(r.messages.map((m) => ({ role: m.sender, text: m.message, sources: m.source_metadata?.sources || [], ui: m.source_metadata?.ui || null, trace: m.source_metadata?.trace || null })));
+      setMessages(
+        r.messages.map((m) => ({
+          role: m.sender,
+          text: m.message,
+          sources: m.source_metadata?.sources || [],
+          ui: m.source_metadata?.ui || null,
+          trace: m.source_metadata?.trace || null,
+        }))
+      );
     } catch (e) {
       setError(e.message);
     }
   }
 
-  async function removeSession(id) {
-    if (!window.confirm('Delete this conversation? This cannot be undone.')) return;
+  async function removeSession(e, id) {
+    e.stopPropagation();
+    if (!window.confirm('Delete this conversation? This action cannot be undone.')) return;
     try {
       await api.deleteSession(id);
       if (id === activeId) newChat();
@@ -63,13 +116,26 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
     setError('');
     setMessages((m) => [...m, { role: 'user', text: message }]);
     setLoading(true);
+
     try {
       const r = await api.chat(message, activeId, mode, agent);
-      setMessages((m) => [...m, { role: 'assistant', text: r.answer, sources: r.sources || [], ui: r.ui || null, trace: r.trace || null }]);
-      if (!activeId) { setActiveId(r.sessionId); loadSessions(); }
+      setMessages((m) => [
+        ...m,
+        {
+          role: 'assistant',
+          text: r.answer,
+          sources: r.sources || [],
+          ui: r.ui || null,
+          trace: r.trace || null,
+        },
+      ]);
+      if (!activeId) {
+        setActiveId(r.sessionId);
+        loadSessions();
+      }
     } catch (e) {
       setError(e.message);
-      setInput(message);   // give the text back so nothing is lost
+      setInput(message);
       setMessages((m) => m.slice(0, -1));
     } finally {
       setLoading(false);
@@ -77,98 +143,328 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
   }
 
   function onKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
   }
 
+  const roleBadgeStyle = {
+    student: 'bg-blue-900/60 text-blue-200 border-blue-800',
+    teacher: 'bg-emerald-900/60 text-emerald-200 border-emerald-800',
+    hod: 'bg-purple-900/60 text-purple-200 border-purple-800',
+    admin: 'bg-rose-900/60 text-rose-200 border-rose-800',
+    applicant: 'bg-amber-900/60 text-amber-200 border-amber-800',
+    visitor: 'bg-slate-800 text-slate-300 border-slate-700',
+  }[user.role] || 'bg-slate-800 text-slate-300 border-slate-700';
+
   return (
-    <div className="h-full flex bg-slate-100">
-      {/* Sidebar */}
-      <aside className={`fixed md:static inset-y-0 left-0 z-20 w-72 bg-slate-900 text-slate-100 flex flex-col transition-transform
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
-        <div className="p-3">
-          <button onClick={newChat} className="w-full rounded-lg border border-slate-600 hover:bg-slate-800 py-2 font-medium">
-            + New chat
+    <div className="h-full flex bg-slate-50 overflow-hidden">
+      {/* Sidebar Navigation */}
+      <aside
+        className={`fixed md:static inset-y-0 left-0 z-30 w-72 bg-slate-950 text-slate-200 flex flex-col border-r border-slate-800/80 transition-transform duration-200 ease-in-out ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        } md:translate-x-0`}
+      >
+        {/* Brand & New Chat */}
+        <div className="p-4 border-b border-slate-800/60">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold">
+                <GraduationCap className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-white tracking-tight leading-none">Apex University</div>
+                <div className="text-[10px] text-slate-400 font-medium tracking-wide">Smart Assistant</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="md:hidden text-slate-400 hover:text-white p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <button
+            onClick={newChat}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 py-2.5 px-3 text-xs font-semibold text-white transition-all shadow-xs"
+          >
+            <Plus className="w-4 h-4 text-indigo-400" />
+            <span>New Conversation</span>
           </button>
         </div>
-        <nav className="flex-1 overflow-y-auto px-2 space-y-1" aria-label="Conversations">
-          {sessions.length === 0 && <p className="text-sm text-slate-400 px-2 py-4">No conversations yet.</p>}
-          {sessions.map((s) => (
-            <div key={s.id} className={`group flex items-center rounded-lg ${s.id === activeId ? 'bg-slate-700' : 'hover:bg-slate-800'}`}>
-              <button onClick={() => openSession(s.id)} className="flex-1 text-left px-3 py-2 truncate text-sm" title={s.session_title}>
-                {s.session_title || 'Untitled'}
-              </button>
-              <button onClick={() => removeSession(s.id)} aria-label="Delete conversation"
-                className="px-2 text-slate-400 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100">🗑</button>
+
+        {/* Conversation List */}
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1" aria-label="Recent Conversations">
+          <div className="px-2 py-1 text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+            Conversations
+          </div>
+          {sessions.length === 0 ? (
+            <div className="px-3 py-6 text-center text-xs text-slate-400">
+              No previous chats found.
             </div>
-          ))}
-        </nav>
-        <div className="p-3 border-t border-slate-700 text-sm">
-          <div className="font-medium truncate">{user.full_name}</div>
-          <div className="text-slate-400 capitalize mb-2">{user.role}</div>
-          <button onClick={() => onMap()} className="block mb-2 w-full rounded-lg border border-slate-600 hover:bg-slate-800 py-1.5 font-medium">🗺 Campus map</button>
-          {user.role === 'admin' && (
-            <button onClick={onAdmin} className="block mb-2 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 py-1.5 font-medium">⚙ Admin panel</button>
+          ) : (
+            sessions.map((s) => {
+              const active = s.id === activeId;
+              return (
+                <div
+                  key={s.id}
+                  onClick={() => openSession(s.id)}
+                  role="button"
+                  tabIndex={0}
+                  className={`group flex items-center justify-between px-3 py-2 rounded-xl text-xs cursor-pointer transition-colors ${
+                    active
+                      ? 'bg-slate-800/90 text-white font-medium border border-slate-700/60'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+                    <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-indigo-400' : 'text-slate-400'}`} />
+                    <span className="truncate">{s.session_title || 'Untitled Session'}</span>
+                  </div>
+                  <button
+                    onClick={(e) => removeSession(e, s.id)}
+                    aria-label="Delete conversation"
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-400 rounded transition-opacity"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })
           )}
-          <button onClick={onLogout} className="text-slate-300 hover:text-white underline">Sign out</button>
+        </nav>
+
+        {/* User Profile & Portal Links */}
+        <div className="p-3 border-t border-slate-800/80 bg-slate-950/60 space-y-2 text-xs">
+          <div className="flex items-center justify-between px-2 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800/60">
+            <div className="min-w-0 mr-2">
+              <div className="font-semibold text-white truncate text-[11.5px]">{user.full_name}</div>
+              <div className="text-[10.5px] text-slate-400 truncate">{user.email}</div>
+            </div>
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border capitalize ${roleBadgeStyle}`}>
+              {user.role}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-1">
+            <button
+              onClick={() => { setSidebarOpen(false); onMap(); }}
+              className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors text-left"
+            >
+              <Compass className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Campus Map & Wayfinding</span>
+            </button>
+
+            {user.role === 'admin' && (
+              <button
+                onClick={() => { setSidebarOpen(false); onAdmin(); }}
+                className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors text-left"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-rose-400" />
+                <span>Admin Control Panel</span>
+              </button>
+            )}
+
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-900/50 transition-colors text-left"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
         </div>
       </aside>
-      {sidebarOpen && <div className="fixed inset-0 bg-black/40 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
 
-      {/* Main */}
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3">
-          <button className="md:hidden text-xl" onClick={() => setSidebarOpen(true)} aria-label="Open menu">☰</button>
-          <h1 className="font-semibold flex-1 truncate">🎓 University Smart Assistant</h1>
-          <button onClick={() => setAgent(!agent)} aria-pressed={agent}
-            title="Agent mode: the assistant plans, uses several tools and checks its answer. Slower, and uses more AI requests."
-            className={`rounded-lg border px-3 py-1 text-sm font-medium ${agent ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 hover:bg-slate-100'}`}>
-            🤖 Agent {agent ? 'on' : 'off'}
-          </button>
-          <div className="flex rounded-lg border border-slate-300 overflow-hidden text-sm" role="group" aria-label="Explanation mode">
-            {['simple', 'detailed'].map((m) => (
-              <button key={m} onClick={() => setMode(m)}
-                className={`px-3 py-1 capitalize ${mode === m ? 'bg-indigo-600 text-white' : 'bg-white hover:bg-slate-100'}`}>{m}</button>
-            ))}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-20 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Main Chat Workspace */}
+      <main className="flex-1 flex flex-col min-w-0 bg-white">
+        {/* Top Header Bar */}
+        <header className="h-14 border-b border-slate-200/80 px-4 md:px-6 flex items-center justify-between gap-3 bg-white/90 backdrop-blur-md sticky top-0 z-10">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              className="md:hidden text-slate-600 hover:text-slate-900 p-1 rounded-lg"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open sidebar"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <h1 className="font-semibold text-slate-900 text-sm tracking-tight truncate">
+                University Smart Assistant
+              </h1>
+            </div>
+          </div>
+
+          {/* Controls: Mode Switch & Agent Mode Toggle */}
+          <div className="flex items-center gap-2">
+            {/* Agent Mode Switch */}
+            <button
+              onClick={() => setAgent(!agent)}
+              aria-pressed={agent}
+              title="Agent Mode: The assistant autonomously plans, searches records, checks classrooms and validates facts before answering."
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all shadow-2xs ${
+                agent
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-emerald-600/20'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <Bot className="w-3.5 h-3.5" />
+              <span>Agent Mode</span>
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  agent ? 'bg-white' : 'bg-slate-300'
+                }`}
+              />
+            </button>
+
+            {/* Explanation Detail Switcher */}
+            <div className="hidden sm:flex p-0.5 rounded-xl border border-slate-200 bg-slate-100/80 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setMode('simple')}
+                className={`px-2.5 py-1 rounded-lg transition-all ${
+                  mode === 'simple'
+                    ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                Concise
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('detailed')}
+                className={`px-2.5 py-1 rounded-lg transition-all ${
+                  mode === 'detailed'
+                    ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                In-Depth
+              </button>
+            </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="max-w-3xl mx-auto space-y-4">
+        {/* Message Stream */}
+        <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
+          <div className="max-w-3xl mx-auto space-y-6">
             {messages.length === 0 && !loading && (
-              <div className="text-center pt-10">
-                <div className="text-5xl mb-3">👋</div>
-                <h2 className="text-xl font-semibold mb-1">Hi {user.full_name.split(' ')[0]}, how can I help?</h2>
-                <p className="text-slate-500 mb-6">Ask me anything about studies and programming. Try one of these:</p>
-                <div className="grid sm:grid-cols-2 gap-2 max-w-xl mx-auto">
-                  {SUGGESTIONS.map((s) => (
-                    <button key={s} onClick={() => send(s)}
-                      className="text-left bg-white border border-slate-200 hover:border-indigo-400 rounded-xl px-4 py-3 text-sm shadow-sm">{s}</button>
+              <div className="pt-8 pb-4 text-center">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 mb-3 shadow-2xs">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-900 tracking-tight mb-1">
+                  Welcome, {user.full_name.split(' ')[0]}
+                </h2>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mb-8">
+                  I can retrieve your enrolled courses, attendance, exams, timetables, and campus walking directions, or explain academic concepts.
+                </p>
+
+                {/* Categorized Suggestions */}
+                <div className="grid sm:grid-cols-2 gap-3 text-left">
+                  {PROMPT_CATEGORIES.map((cat, idx) => (
+                    <div key={idx} className="space-y-2">
+                      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1">
+                        <cat.icon className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{cat.category}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {cat.prompts.map((p, pIdx) => (
+                          <button
+                            key={pIdx}
+                            onClick={() => send(p.query)}
+                            className="w-full text-left p-3 rounded-xl border border-slate-200/90 bg-white hover:border-indigo-300 hover:bg-indigo-50/20 shadow-2xs transition-all group"
+                          >
+                            <div className="flex items-center justify-between text-xs font-semibold text-slate-800 group-hover:text-indigo-600 mb-0.5">
+                              <span>{p.label}</span>
+                              <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-500 transition-transform group-hover:translate-x-0.5" />
+                            </div>
+                            <div className="text-[11px] text-slate-500 line-clamp-1">
+                              {p.query}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
-            {messages.map((m, i) => <MessageBubble key={i} role={m.role} text={m.text} sources={m.sources} ui={m.ui} trace={m.trace} onMap={onMap} />)}
-            {loading && <TypingIndicator label={agent ? 'Agent is working…' : 'Assistant is typing'} />}
+
+            {messages.map((m, i) => (
+              <MessageBubble
+                key={i}
+                role={m.role}
+                text={m.text}
+                sources={m.sources}
+                ui={m.ui}
+                trace={m.trace}
+                onMap={onMap}
+              />
+            ))}
+
+            {loading && (
+              <TypingIndicator
+                label={agent ? 'Agent is planning and querying records…' : 'Synthesizing verified response…'}
+              />
+            )}
             <div ref={bottomRef} />
           </div>
         </div>
 
-        <div className="bg-white border-t border-slate-200 p-3">
+        {/* Input Bar */}
+        <div className="border-t border-slate-200/80 bg-white p-3 md:p-4">
           <div className="max-w-3xl mx-auto">
             {error && (
-              <div role="alert" className="mb-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex justify-between gap-2">
+              <div
+                role="alert"
+                className="mb-2.5 flex items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50/70 px-3.5 py-2 text-xs text-rose-800"
+              >
                 <span>{error}</span>
-                <button onClick={() => setError('')} aria-label="Dismiss" className="font-bold">×</button>
+                <button onClick={() => setError('')} className="font-bold text-rose-600">
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
-            <div className="flex gap-2 items-end">
-              <textarea rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={onKeyDown}
-                maxLength={4000} placeholder="Type your question… (Enter to send, Shift+Enter for a new line)"
-                className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 max-h-40 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-              <button onClick={() => send()} disabled={loading || !input.trim()}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl px-4 py-2 font-medium">
-                Send
+
+            <div className="relative flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/50 p-1.5 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/10 focus-within:bg-white transition-all shadow-2xs">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+                maxLength={4000}
+                placeholder="Ask about attendance, next classroom, exams, admissions or study concepts…"
+                className="flex-1 resize-none bg-transparent px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none max-h-36 leading-relaxed"
+              />
+              <button
+                onClick={() => send()}
+                disabled={loading || !input.trim()}
+                aria-label="Send message"
+                className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white shrink-0 shadow-xs transition-all"
+              >
+                <Send className="w-4 h-4" />
               </button>
+            </div>
+
+            <div className="flex items-center justify-between mt-2 px-1 text-[11px] text-slate-400">
+              <span>
+                Press <kbd className="px-1 py-0.5 rounded border border-slate-200 bg-slate-100 font-mono text-[10px]">Enter</kbd> to send, <kbd className="px-1 py-0.5 rounded border border-slate-200 bg-slate-100 font-mono text-[10px]">Shift+Enter</kbd> for newline
+              </span>
+              <span className="hidden sm:inline">
+                {agent ? 'Agent loop enabled (ReAct planner)' : 'Standard RAG & direct routing'}
+              </span>
             </div>
           </div>
         </div>
