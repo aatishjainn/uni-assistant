@@ -15,7 +15,12 @@
 
 The **University Smart Assistant** is a unified campus operating portal designed for students, teachers, department heads, administrators, applicants, and visitors. It bridges traditional institutional databases with modern conversational AI, delivering verified personal records, academic explanations, administrative document search, and campus walking navigation while strictly upholding user privacy and zero-trust data isolation.
 
-For an extensive technical deep-dive, see [**`ARCHITECTURE.md`**](ARCHITECTURE.md).
+### 📚 Official Deliverables & Technical Documentation
+- [**`SYSTEM_DESIGN.md`**](SYSTEM_DESIGN.md): Software Requirements Specification (SRS), High-Level Design (HLD), and Low-Level Design (LLD).
+- [**`DATABASE.md`**](DATABASE.md): Complete Relational Database Documentation, Data Dictionary, and Mermaid Entity-Relationship (ER) Diagram.
+- [**`SECURITY_REPORT.md`**](SECURITY_REPORT.md): Formal Security & Verification Report covering Mandatory Security Tests, Zero-Trust Student Data Isolation, and HOD Boundary Tests.
+- [**`postman_collection.json`**](postman_collection.json): Production-grade Postman collection for evaluators, pre-configured with Authentication, AI Chat, Academic Records, HOD, Teacher, Admin, Navigation, and Security Test Scenarios.
+- [**`ARCHITECTURE.md`**](ARCHITECTURE.md): Technical Architecture Walkthrough, Hybrid RAG with Reciprocal Rank Fusion, and ReAct Planning Engine.
 
 ---
 

@@ -1,0 +1,1217 @@
+{
+	"info": {
+		"_postman_id": "uni-assistant-api-collection-v1",
+		"name": "Uni-Assistant API — Complete Evaluation Collection",
+		"description": "Comprehensive Postman collection for the AI-Powered University Smart Assistant, covering Authentication, AI Chat, Student, Teacher, HOD, Admin, Campus Navigation, and Mandatory Security Tests.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:4000/api",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "admin_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "student_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "teacher_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "cs_hod_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "mgmt_hod_token",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "01. Authentication & RBAC",
+			"item": [
+				{
+					"name": "Login as Admin",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var data = pm.response.json();",
+									"if (data.token) {",
+									"    pm.collectionVariables.set('admin_token', data.token);",
+									"    pm.collectionVariables.set('token', data.token);",
+									"}",
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Role is admin', function () { pm.expect(data.user.role).to.eql('admin'); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"admin@uni.test\",\n  \"password\": \"Password@123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					}
+				},
+				{
+					"name": "Login as Student (Rahul Sharma)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var data = pm.response.json();",
+									"if (data.token) {",
+									"    pm.collectionVariables.set('student_token', data.token);",
+									"}",
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Role is student', function () { pm.expect(data.user.role).to.eql('student'); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"student1@uni.test\",\n  \"password\": \"Password@123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					}
+				},
+				{
+					"name": "Login as Teacher (Prof. Rahul Verma)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var data = pm.response.json();",
+									"if (data.token) {",
+									"    pm.collectionVariables.set('teacher_token', data.token);",
+									"}",
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Role is teacher', function () { pm.expect(data.user.role).to.eql('teacher'); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"teacher@uni.test\",\n  \"password\": \"Password@123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					}
+				},
+				{
+					"name": "Login as CS HOD (Dr. Meera Sharma)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var data = pm.response.json();",
+									"if (data.token) {",
+									"    pm.collectionVariables.set('cs_hod_token', data.token);",
+									"}",
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Role is hod', function () { pm.expect(data.user.role).to.eql('hod'); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"hod@uni.test\",\n  \"password\": \"Password@123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					}
+				},
+				{
+					"name": "Login as Management HOD (Dr. Anil Kapoor)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var data = pm.response.json();",
+									"if (data.token) {",
+									"    pm.collectionVariables.set('mgmt_hod_token', data.token);",
+									"}",
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Role is hod', function () { pm.expect(data.user.role).to.eql('hod'); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"hod2@uni.test\",\n  \"password\": \"Password@123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					}
+				},
+				{
+					"name": "Verify Profile (/auth/me)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/auth/me",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "02. AI Chatbot & Intent Scenarios (Tasks 1, 2, 4)",
+			"item": [
+				{
+					"name": "Ask General Education Q (Task 4: Explain AI)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What is Artificial Intelligence? Give a practical example.\",\n  \"mode\": \"simple\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "Generate 10 DBMS MCQs (Task 4 & 6)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{teacher_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"Generate 10 multiple choice questions with answers on Database Management Systems (DBMS).\",\n  \"mode\": \"detailed\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "Ask Admission Eligibility (Task 2: BCA Eligibility)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What is the eligibility criteria and fee structure for BCA admission?\",\n  \"mode\": \"simple\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "ReAct Autonomous Agent Mode (Compound Query)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What is my attendance percentage and when is my next examination?\",\n  \"agent\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "Submit Response Feedback (Thumbs Up / Down)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"messageId\": \"00000000-0000-0000-0000-000000000001\",\n  \"rating\": 5,\n  \"comments\": \"Accurate and fast response!\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat/feedback",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat",
+								"feedback"
+							]
+						}
+					}
+				},
+				{
+					"name": "List User Chat Sessions",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/chat/sessions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat",
+								"sessions"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "03. Student Services (Task 5)",
+			"item": [
+				{
+					"name": "Student Timetable (via Chat)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What is my timetable for today?\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "Student Attendance (via Chat)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What is my attendance percentage across all subjects?\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "Student Upcoming Exams (via Chat)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"When is my next examination and where is it located?\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "04. Teacher Services (Task 6)",
+			"item": [
+				{
+					"name": "Teacher Next Classroom (/faculty/me/next-class)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{teacher_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/faculty/me/next-class",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"faculty",
+								"me",
+								"next-class"
+							]
+						}
+					}
+				},
+				{
+					"name": "Teacher Assigned Subjects (/faculty/me/subjects)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{teacher_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/faculty/me/subjects",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"faculty",
+								"me",
+								"subjects"
+							]
+						}
+					}
+				},
+				{
+					"name": "Teacher Timetable (via Chat)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{teacher_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What is my teaching timetable for today and what subjects am I assigned to?\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "05. HOD Portal & Department Ops (Task 7)",
+			"item": [
+				{
+					"name": "Department Overview (/hod/overview)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/overview",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"overview"
+							]
+						}
+					}
+				},
+				{
+					"name": "Department Faculty & Workload (/hod/faculty)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/faculty",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"faculty"
+							]
+						}
+					}
+				},
+				{
+					"name": "Department Courses & Curriculum (/hod/courses)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/courses",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"courses"
+							]
+						}
+					}
+				},
+				{
+					"name": "Department Schedule & Exams (/hod/schedule-exams)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/schedule-exams",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"schedule-exams"
+							]
+						}
+					}
+				},
+				{
+					"name": "Department Pending Activities (/hod/pending)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/pending",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"pending"
+							]
+						}
+					}
+				},
+				{
+					"name": "Department Analytics - Aggregates Only (/hod/analytics)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/analytics",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"analytics"
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Campus Classrooms (/hod/classrooms)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/classrooms",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"classrooms"
+							]
+						}
+					}
+				},
+				{
+					"name": "Download Department Report CSV (/hod/report/csv)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cs_hod_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/report/csv",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"report",
+								"csv"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "06. Campus Wayfinding & Navigation (Task 3)",
+			"item": [
+				{
+					"name": "Get Campus Buildings (/campus/buildings)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/campus/buildings",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"campus",
+								"buildings"
+							]
+						}
+					}
+				},
+				{
+					"name": "Search Places (/campus/places?q=Lab)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/campus/places?q=Lab",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"campus",
+								"places"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "Lab"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Compute Walking Route (Dijkstra MinHeap)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/campus/route?from=QR-GATE&to=Room%20201%20(BCA)&accessible=false",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"campus",
+								"route"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "QR-GATE"
+								},
+								{
+									"key": "to",
+									"value": "Room 201 (BCA)"
+								},
+								{
+									"key": "accessible",
+									"value": "false"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Compute Step-Free Accessible Route (Elevators Only)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/campus/route?from=QR-GATE&to=Room%20201%20(BCA)&accessible=true",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"campus",
+								"route"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "QR-GATE"
+								},
+								{
+									"key": "to",
+									"value": "Room 201 (BCA)"
+								},
+								{
+									"key": "accessible",
+									"value": "true"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Lookup QR Code Placard (/campus/qr/:token)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/campus/qr/QR-GATE",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"campus",
+								"qr",
+								"QR-GATE"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "07. Admin Panel & Knowledge Management (Task 9)",
+			"item": [
+				{
+					"name": "List Users (/admin/users)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/users",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"users"
+							]
+						}
+					}
+				},
+				{
+					"name": "List Departments (/admin/departments)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/departments",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"departments"
+							]
+						}
+					}
+				},
+				{
+					"name": "List Faculty (/admin/faculty)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/faculty",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"faculty"
+							]
+						}
+					}
+				},
+				{
+					"name": "List Knowledge FAQs (/admin/faqs)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/faqs",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"faqs"
+							]
+						}
+					}
+				},
+				{
+					"name": "List Public FAQs (/faqs)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/faqs",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"faqs"
+							]
+						}
+					}
+				},
+				{
+					"name": "System Telemetry & Analytics (/admin/analytics)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/analytics",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"analytics"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "08. Mandatory Security Tests (PDF Section 6 & 8)",
+			"item": [
+				{
+					"name": "Test Scenario 10: Student Attempting to Access Another Student's Records (MUST BE BLOCKED)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Cross-student privacy guard triggers or blocks inquiry', function () {",
+									"    var data = pm.response.json();",
+									"    pm.expect(data.reply.toLowerCase()).to.satisfy(function(str) {",
+									"        return str.includes('privacy') || str.includes('only') || str.includes('cannot') || str.includes('authorized') || str.includes('deny');",
+									"    });",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message\": \"What are the examination marks and attendance of Amit Patel (student2)?\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"chat"
+							]
+						}
+					}
+				},
+				{
+					"name": "Department Isolation: Student attempting to access HOD Portal (MUST RETURN 403 FORBIDDEN)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403 Forbidden', function () {",
+									"    pm.response.to.have.status(403);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{student_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/hod/overview",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"overview"
+							]
+						}
+					}
+				},
+				{
+					"name": "Cross-Department Isolation: Management HOD attempting to assign CS exam (MUST FAIL)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Cross-department access is rejected with 404 or 403', function () {",
+									"    pm.expect([403, 404]).to.include(pm.response.code);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{mgmt_hod_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"classroom_id\": \"00000000-0000-0000-0000-000000000001\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/hod/examinations/00000000-0000-0000-0000-000000000001/classroom",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"hod",
+								"examinations",
+								"00000000-0000-0000-0000-000000000001",
+								"classroom"
+							]
+						}
+					}
+				},
+				{
+					"name": "Unauthenticated access to protected endpoint (MUST RETURN 401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 401 Unauthorized', function () {",
+									"    pm.response.to.have.status(401);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/admin/users",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"users"
+							]
+						}
+					}
+				}
+			]
+		}
+	]
+}
