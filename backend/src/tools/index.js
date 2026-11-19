@@ -3,6 +3,7 @@
 //  - personal tools only read data belonging to the signed-in user (ctx.user.id comes from the verified token)
 //  - public tools return approved, university-wide records anyone may ask about
 const records = require('../services/records');
+const hod = require('../services/hod');
 const { DAY_NAMES } = require('../services/time');
 const campus = require('../services/campus');
 
@@ -83,6 +84,55 @@ const registry = {
     kind: 'personal', personal: true, roles: ['teacher'],
     description: 'Subjects assigned to the signed-in teacher.',
     run: async ({ user }) => ({ subjects: await records.getFacultySubjects(user.id) }),
+  },
+  teacher_next_class: {
+    kind: 'personal', personal: true, roles: ['teacher'],
+    description: "The signed-in teacher's next class/lecture and where that classroom is (room, floor, building).",
+    run: async ({ user, now }) => {
+      const rows = await records.getFacultyTimetable(user.id);
+      const upcoming = rows.find((r) => r.day_of_week > now.dow || (r.day_of_week === now.dow && hm(r.start_time) > now.time));
+      const next = upcoming || rows[0] || null;
+      const place = next && next.classroom_id ? await campus.nodeForClassroom(next.classroom_id) : null;
+      return { now: `${DAY_NAMES[now.dow]} ${now.time}`, next_class: next ? slot(next) : null,
+        ...(place ? { _ui: { map: { to: place.id } } } : {}) };
+    },
+  },
+
+  // ---------------- HOD department tools (head of department role only) ----------------
+  hod_department_overview: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Overview of the signed-in HOD's own department: faculty count, student count, courses count, subjects count, upcoming exams, and total pending activities count.",
+    run: async ({ user }) => hod.getDepartmentOverview(user.id),
+  },
+  hod_faculty_and_subjects: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Faculty members in the signed-in HOD's department, their employee numbers, workload, and assigned subjects.",
+    run: async ({ user }) => hod.getDepartmentFaculty(user.id),
+  },
+  hod_courses_offered: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Courses and curriculum subjects offered by the signed-in HOD's department, including student enrollment numbers and assigned teachers.",
+    run: async ({ user }) => hod.getDepartmentCourses(user.id),
+  },
+  hod_schedule_and_exams: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Weekly timetable schedule and examination dates/classrooms for courses and subjects in the signed-in HOD's department.",
+    run: async ({ user }) => hod.getDepartmentScheduleAndExams(user.id),
+  },
+  hod_pending_activities: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Pending tasks in the signed-in HOD's department: examinations without assigned classrooms, completed exams missing marks entry, and unassigned subjects.",
+    run: async ({ user }) => hod.getDepartmentPendingActivities(user.id),
+  },
+  hod_department_analytics: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Department-level aggregate analytics only: overall attendance %, subject attendance %, exam pass rates and grade distributions, and faculty teaching hours.",
+    run: async ({ user }) => hod.getDepartmentAnalytics(user.id),
+  },
+  hod_department_notices: {
+    kind: 'department_records', personal: true, roles: ['hod'],
+    description: "Internal department notices and announcements published for the signed-in HOD's department.",
+    run: async ({ user }) => hod.getDepartmentNotices(user.id),
   },
 
   // ---------------- public university records (approved data; every role) ----------------

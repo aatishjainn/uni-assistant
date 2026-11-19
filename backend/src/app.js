@@ -11,10 +11,20 @@ app.use(express.json({ limit: '100kb' }));
 app.use(rateLimit({ windowMs: 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false }));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/faqs', async (req, res, next) => {
+  try {
+    const db = require('./db');
+    const { rows } = await db.query('SELECT id, question, answer, category FROM faqs WHERE is_published ORDER BY category, question');
+    res.json({ faqs: rows });
+  } catch (err) {
+    next(err);
+  }
+});
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/students', require('./routes/students'));
 app.use('/api/faculty', require('./routes/faculty'));
+app.use('/api/hod', require('./routes/hod'));
 app.use('/api/campus', require('./routes/campus'));
 app.use('/api/admin', require('./routes/admin'));
 

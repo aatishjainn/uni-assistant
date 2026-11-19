@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 const multer = require('multer');
+const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const config = require('../config');
 const db = require('../db');
@@ -286,6 +287,618 @@ router.get('/analytics', asyncHandler(async (req, res) => {
     q('SELECT round(avg(rating), 2) AS average, count(*)::int AS count FROM feedback'),
   ]);
   res.json({ totals: totals[0], questions_per_day: perDay, intents, denied_attempts: denied[0].count, documents: docs[0], feedback: rating[0] });
+}));
+
+// ---------------------------------------------------------------- user management
+router.get('/users', asyncHandler(async (req, res) => {
+  const { search, role, limit = 200, offset = 0 } = req.query;
+  const conditions = [];
+  const params = [];
+
+  if (search && search.trim()) {
+    params.push(`%${search.trim().toLowerCase()}%`);
+    conditions.push(`(lower(u.full_name) LIKE $${params.length} OR lower(u.email) LIKE $${params.length} OR lower(COALESCE(s.student_number, '')) LIKE $${params.length} OR lower(COALESCE(f.employee_number, '')) LIKE $${params.length})`);
+  }
+  if (role && role.trim()) {
+    params.push(role.trim());
+    conditions.push(`r.role_name = $${params.length}`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  params.push(Number(limit) || 200);
+  const limitParam = `$${params.length}`;
+  params.push(Number(offset) || 0);
+  const offsetParam = `$${params.length}`;
+
+  const { rows } = await db.query(
+    `SELECT u.id, u.full_name, u.email, u.is_active,
+            to_char(u.created_at, 'YYYY-MM-DD') AS created_at,
+            r.role_name AS role,
+            COALESCE(s.department_id, f.department_id, dh.id) AS department_id,
+            COALESCE(ds.department_name, df.department_name, dh.department_name) AS department_name,
+            s.student_number, s.semester, c.course_name, c.id AS course_id,
+            f.employee_number
+       FROM users u
+       JOIN roles r ON r.id = u.role_id
+       LEFT JOIN students s ON s.user_id = u.id
+       LEFT JOIN courses c ON c.id = s.course_id
+       LEFT JOIN departments ds ON ds.id = s.department_id
+       LEFT JOIN faculty f ON f.user_id = u.id
+       LEFT JOIN departments df ON df.id = f.department_id
+       LEFT JOIN departments dh ON dh.hod_user_id = u.id
+      ${whereClause}
+      ORDER BY u.created_at DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    params
+  );
+
+  const countRes = await db.query(
+    `SELECT count(*)::int AS total FROM users u JOIN roles r ON r.id = u.role_id ${whereClause}`,
+    params.slice(0, conditions.length)
+  );
+
+  res.json({ users: rows, total: countRes.rows[0].total });
+}));
+
+router.get('/roles', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT id, role_name FROM roles ORDER BY role_name');
+  res.json({ roles: rows });
+}));
+
+const createUserSchema = z.object({
+  full_name: z.string().trim().min(2).max(100),
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(200).default('Password@123'),
+  role: z.enum(['student', 'teacher', 'hod', 'admin', 'applicant', 'visitor']),
+  department_id: z.preprocess(emptyToNull, z.string().uuid().nullable().optional()),
+  course_id: z.preprocess(emptyToNull, z.string().uuid().nullable().optional()),
+  semester: z.preprocess(emptyToNull, z.coerce.number().int().min(1).max(12).nullable().optional()),
+  student_number: z.preprocess(emptyToNull, z.string().trim().max(50).nullable().optional()),
+  employee_number: z.preprocess(emptyToNull, z.string().trim().max(50).nullable().optional()),
+}).strict();
+
+router.post('/users', asyncHandler(async (req, res) => {
+  const parsed = createUserSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const u = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const exists = await client.query('SELECT 1 FROM users WHERE lower(email) = lower($1)', [u.email]);
+    if (exists.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'A user with this email already exists' });
+    }
+
+    const hash = await bcrypt.hash(u.password, 10);
+    const userRes = await client.query(
+      `INSERT INTO users (role_id, full_name, email, password_hash, is_active)
+       VALUES ((SELECT id FROM roles WHERE role_name = $1), $2, $3, $4, true)
+       RETURNING id, full_name, email`,
+      [u.role, u.full_name, u.email.toLowerCase(), hash]
+    );
+    const userId = userRes.rows[0].id;
+
+    if (u.role === 'student') {
+      if (!u.department_id || !u.course_id || !u.semester) {
+        await client.query('ROLLBACK');
+        return bad(res, 'department_id, course_id, and semester are required for students');
+      }
+      const sNum = u.student_number || `STU${Date.now().toString().slice(-6)}`;
+      await client.query(
+        `INSERT INTO students (user_id, student_number, department_id, course_id, semester)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [userId, sNum, u.department_id, u.course_id, u.semester]
+      );
+    } else if (u.role === 'teacher') {
+      if (!u.department_id) {
+        await client.query('ROLLBACK');
+        return bad(res, 'department_id is required for teachers');
+      }
+      const eNum = u.employee_number || `EMP${Date.now().toString().slice(-4)}`;
+      await client.query(
+        `INSERT INTO faculty (user_id, employee_number, department_id)
+         VALUES ($1, $2, $3)`,
+        [userId, eNum, u.department_id]
+      );
+    } else if (u.role === 'hod') {
+      if (u.department_id) {
+        await client.query(
+          'UPDATE departments SET hod_user_id = $1 WHERE id = $2',
+          [userId, u.department_id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    await audit(req.user.id, 'admin_user_create', 'user', userId, {
+      full_name: u.full_name,
+      email: u.email,
+      role: u.role,
+    });
+    res.status(201).json({ user: { id: userId, full_name: u.full_name, email: u.email, role: u.role } });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+const updateUserSchema = z.object({
+  full_name: z.string().trim().min(2).max(100).optional(),
+  is_active: z.boolean().optional(),
+  role: z.enum(['student', 'teacher', 'hod', 'admin', 'applicant', 'visitor']).optional(),
+  department_id: z.preprocess(emptyToNull, z.string().uuid().nullable().optional()),
+  course_id: z.preprocess(emptyToNull, z.string().uuid().nullable().optional()),
+  semester: z.preprocess(emptyToNull, z.coerce.number().int().min(1).max(12).nullable().optional()),
+  password: z.preprocess(emptyToNull, z.string().min(8).max(200).nullable().optional()),
+}).strict();
+
+router.patch('/users/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = updateUserSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const data = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const cur = await client.query(
+      `SELECT u.id, u.full_name, u.email, u.is_active, r.role_name AS role
+         FROM users u JOIN roles r ON r.id = u.role_id
+        WHERE u.id = $1`,
+      [req.params.id]
+    );
+    if (!cur.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const sets = [];
+    const params = [req.params.id];
+    if (data.full_name !== undefined) {
+      params.push(data.full_name);
+      sets.push(`full_name = $${params.length}`);
+    }
+    if (data.is_active !== undefined) {
+      params.push(data.is_active);
+      sets.push(`is_active = $${params.length}`);
+    }
+    if (data.role !== undefined) {
+      sets.push(`role_id = (SELECT id FROM roles WHERE role_name = '${data.role}')`);
+    }
+    if (data.password) {
+      const hash = await bcrypt.hash(data.password, 10);
+      params.push(hash);
+      sets.push(`password_hash = $${params.length}`);
+    }
+
+    if (sets.length) {
+      await client.query(`UPDATE users SET ${sets.join(', ')}, updated_at = now() WHERE id = $1`, params);
+    }
+
+    const effectiveRole = data.role || cur.rows[0].role;
+
+    if (effectiveRole === 'student') {
+      if (data.department_id || data.course_id || data.semester) {
+        const studentSets = [];
+        const studentParams = [req.params.id];
+        if (data.department_id) { studentParams.push(data.department_id); studentSets.push(`department_id = $${studentParams.length}`); }
+        if (data.course_id) { studentParams.push(data.course_id); studentSets.push(`course_id = $${studentParams.length}`); }
+        if (data.semester) { studentParams.push(data.semester); studentSets.push(`semester = $${studentParams.length}`); }
+
+        const sChk = await client.query('SELECT 1 FROM students WHERE user_id = $1', [req.params.id]);
+        if (sChk.rowCount) {
+          if (studentSets.length) {
+            await client.query(`UPDATE students SET ${studentSets.join(', ')} WHERE user_id = $1`, studentParams);
+          }
+        } else if (data.department_id && data.course_id) {
+          await client.query(
+            `INSERT INTO students (user_id, student_number, department_id, course_id, semester)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [req.params.id, `STU${Date.now().toString().slice(-6)}`, data.department_id, data.course_id, data.semester || 1]
+          );
+        }
+      }
+    } else if (effectiveRole === 'teacher') {
+      if (data.department_id) {
+        const fChk = await client.query('SELECT 1 FROM faculty WHERE user_id = $1', [req.params.id]);
+        if (fChk.rowCount) {
+          await client.query('UPDATE faculty SET department_id = $2 WHERE user_id = $1', [req.params.id, data.department_id]);
+        } else {
+          await client.query(
+            `INSERT INTO faculty (user_id, employee_number, department_id)
+             VALUES ($1, $2, $3)`,
+            [req.params.id, `EMP${Date.now().toString().slice(-4)}`, data.department_id]
+          );
+        }
+      }
+    } else if (effectiveRole === 'hod') {
+      if (data.department_id) {
+        await client.query('UPDATE departments SET hod_user_id = $1 WHERE id = $2', [req.params.id, data.department_id]);
+      }
+    }
+
+    await client.query('COMMIT');
+    await audit(req.user.id, 'admin_user_update', 'user', req.params.id, data);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+// ---------------------------------------------------------------- department management
+router.get('/departments', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT d.id, d.department_name, d.hod_user_id, u.full_name AS hod_name, u.email AS hod_email,
+            COUNT(DISTINCT f.id)::int AS faculty_count,
+            COUNT(DISTINCT s.id)::int AS student_count,
+            COUNT(DISTINCT c.id)::int AS course_count
+       FROM departments d
+       LEFT JOIN users u ON u.id = d.hod_user_id
+       LEFT JOIN faculty f ON f.department_id = d.id
+       LEFT JOIN students s ON s.department_id = d.id
+       LEFT JOIN courses c ON c.department_id = d.id
+      GROUP BY d.id, d.department_name, d.hod_user_id, u.full_name, u.email
+      ORDER BY d.department_name`
+  );
+  res.json({ departments: rows });
+}));
+
+const departmentSchema = z.object({
+  department_name: z.string().trim().min(2).max(100),
+  hod_user_id: z.preprocess(emptyToNull, z.string().uuid().nullable().optional()),
+}).strict();
+
+router.post('/departments', asyncHandler(async (req, res) => {
+  const parsed = departmentSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { department_name, hod_user_id } = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'INSERT INTO departments (department_name, hod_user_id) VALUES ($1, $2) RETURNING id, department_name, hod_user_id',
+      [department_name, hod_user_id || null]
+    );
+    if (hod_user_id) {
+      await client.query(
+        "UPDATE users SET role_id = (SELECT id FROM roles WHERE role_name = 'hod') WHERE id = $1",
+        [hod_user_id]
+      );
+    }
+    await client.query('COMMIT');
+    await audit(req.user.id, 'department_create', 'department', rows[0].id, { department_name });
+    res.status(201).json({ department: rows[0] });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23505') return res.status(409).json({ error: 'A department with this name already exists' });
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+router.put('/departments/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = departmentSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { department_name, hod_user_id } = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'UPDATE departments SET department_name = $1, hod_user_id = $2 WHERE id = $3 RETURNING id',
+      [department_name, hod_user_id || null, req.params.id]
+    );
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Department not found' });
+    }
+    if (hod_user_id) {
+      await client.query(
+        "UPDATE users SET role_id = (SELECT id FROM roles WHERE role_name = 'hod') WHERE id = $1",
+        [hod_user_id]
+      );
+    }
+    await client.query('COMMIT');
+    await audit(req.user.id, 'department_update', 'department', req.params.id, parsed.data);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23505') return res.status(409).json({ error: 'A department with this name already exists' });
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
+router.delete('/departments/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  try {
+    const { rowCount } = await db.query('DELETE FROM departments WHERE id = $1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Department not found' });
+    await audit(req.user.id, 'department_delete', 'department', req.params.id);
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === '23503') {
+      return res.status(409).json({ error: 'Cannot delete department with active courses, faculty, or students.' });
+    }
+    throw err;
+  }
+}));
+
+// ---------------------------------------------------------------- faculty management
+router.get('/faculty', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT f.id, f.user_id, f.employee_number, f.department_id, d.department_name,
+            u.full_name, u.email, u.is_active,
+            COALESCE(
+              json_agg(
+                json_build_object(
+                  'fs_id', fs.id,
+                  'subject_id', sub.id,
+                  'subject_code', sub.subject_code,
+                  'subject_name', sub.subject_name,
+                  'course_name', c.course_name,
+                  'academic_year', fs.academic_year
+                ) ORDER BY sub.subject_code
+              ) FILTER (WHERE sub.id IS NOT NULL),
+              '[]'
+            ) AS subjects
+       FROM faculty f
+       JOIN users u ON u.id = f.user_id
+       JOIN departments d ON d.id = f.department_id
+       LEFT JOIN faculty_subjects fs ON fs.faculty_id = f.id
+       LEFT JOIN subjects sub ON sub.id = fs.subject_id
+       LEFT JOIN courses c ON c.id = sub.course_id
+      GROUP BY f.id, f.user_id, f.employee_number, f.department_id, d.department_name, u.full_name, u.email, u.is_active
+      ORDER BY u.full_name`
+  );
+  res.json({ faculty: rows });
+}));
+
+const assignSubjectSchema = z.object({
+  subject_id: uuid,
+  academic_year: z.string().trim().min(4).max(20).default('2026-27'),
+}).strict();
+
+router.post('/faculty/:id/assign-subject', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = assignSubjectSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { subject_id, academic_year } = parsed.data;
+
+  try {
+    await db.query(
+      `INSERT INTO faculty_subjects (faculty_id, subject_id, academic_year)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (faculty_id, subject_id, academic_year) DO NOTHING`,
+      [req.params.id, subject_id, academic_year]
+    );
+    await audit(req.user.id, 'faculty_assign_subject', 'faculty', req.params.id, parsed.data);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23503') return res.status(404).json({ error: 'Faculty or subject not found' });
+    throw err;
+  }
+}));
+
+router.delete('/faculty/:id/subjects/:subjectId', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  if (!uuid.safeParse(req.params.subjectId).success) return bad(res, 'Invalid subject id');
+
+  await db.query(
+    'DELETE FROM faculty_subjects WHERE faculty_id = $1 AND subject_id = $2',
+    [req.params.id, req.params.subjectId]
+  );
+  await audit(req.user.id, 'faculty_unassign_subject', 'faculty', req.params.id, { subject_id: req.params.subjectId });
+  res.status(204).end();
+}));
+
+// ---------------------------------------------------------------- course & subject management
+router.get('/courses', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT c.id, c.course_name, c.duration_years, c.department_id, d.department_name,
+            COUNT(DISTINCT s.id)::int AS student_count,
+            COUNT(DISTINCT sub.id)::int AS subject_count
+       FROM courses c
+       JOIN departments d ON d.id = c.department_id
+       LEFT JOIN students s ON s.course_id = c.id
+       LEFT JOIN subjects sub ON sub.course_id = c.id
+      GROUP BY c.id, c.course_name, c.duration_years, c.department_id, d.department_name
+      ORDER BY d.department_name, c.course_name`
+  );
+  res.json({ courses: rows });
+}));
+
+const courseSchema = z.object({
+  course_name: z.string().trim().min(2).max(100),
+  department_id: uuid,
+  duration_years: z.coerce.number().int().min(1).max(6),
+}).strict();
+
+router.post('/courses', asyncHandler(async (req, res) => {
+  const parsed = courseSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { course_name, department_id, duration_years } = parsed.data;
+
+  const { rows } = await db.query(
+    'INSERT INTO courses (course_name, department_id, duration_years) VALUES ($1, $2, $3) RETURNING id, course_name, department_id, duration_years',
+    [course_name, department_id, duration_years]
+  );
+  await audit(req.user.id, 'course_create', 'course', rows[0].id, parsed.data);
+  res.status(201).json({ course: rows[0] });
+}));
+
+router.put('/courses/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = courseSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { course_name, department_id, duration_years } = parsed.data;
+
+  const { rowCount } = await db.query(
+    'UPDATE courses SET course_name = $1, department_id = $2, duration_years = $3 WHERE id = $4',
+    [course_name, department_id, duration_years, req.params.id]
+  );
+  if (!rowCount) return res.status(404).json({ error: 'Course not found' });
+  await audit(req.user.id, 'course_update', 'course', req.params.id, parsed.data);
+  res.json({ ok: true });
+}));
+
+router.delete('/courses/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  try {
+    const { rowCount } = await db.query('DELETE FROM courses WHERE id = $1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Course not found' });
+    await audit(req.user.id, 'course_delete', 'course', req.params.id);
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === '23503') return res.status(409).json({ error: 'Cannot delete course with active subjects or enrolled students.' });
+    throw err;
+  }
+}));
+
+router.get('/subjects', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT sub.id, sub.subject_code, sub.subject_name, sub.semester, sub.course_id,
+            c.course_name, d.id AS department_id, d.department_name,
+            u.full_name AS assigned_faculty_name, f.id AS assigned_faculty_id
+       FROM subjects sub
+       JOIN courses c ON c.id = sub.course_id
+       JOIN departments d ON d.id = c.department_id
+       LEFT JOIN faculty_subjects fs ON fs.subject_id = sub.id
+       LEFT JOIN faculty f ON f.id = fs.faculty_id
+       LEFT JOIN users u ON u.id = f.user_id
+      ORDER BY d.department_name, c.course_name, sub.semester, sub.subject_code`
+  );
+  res.json({ subjects: rows });
+}));
+
+const subjectSchema = z.object({
+  course_id: uuid,
+  subject_code: z.string().trim().min(2).max(20),
+  subject_name: z.string().trim().min(2).max(100),
+  semester: z.coerce.number().int().min(1).max(12),
+}).strict();
+
+router.post('/subjects', asyncHandler(async (req, res) => {
+  const parsed = subjectSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { course_id, subject_code, subject_name, semester } = parsed.data;
+
+  try {
+    const { rows } = await db.query(
+      'INSERT INTO subjects (course_id, subject_code, subject_name, semester) VALUES ($1, $2, $3, $4) RETURNING id, subject_code, subject_name, semester, course_id',
+      [course_id, subject_code.toUpperCase(), subject_name, semester]
+    );
+    await audit(req.user.id, 'subject_create', 'subject', rows[0].id, parsed.data);
+    res.status(201).json({ subject: rows[0] });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A subject with this subject code already exists' });
+    throw err;
+  }
+}));
+
+router.put('/subjects/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = subjectSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { course_id, subject_code, subject_name, semester } = parsed.data;
+
+  try {
+    const { rowCount } = await db.query(
+      'UPDATE subjects SET course_id = $1, subject_code = $2, subject_name = $3, semester = $4 WHERE id = $5',
+      [course_id, subject_code.toUpperCase(), subject_name, semester, req.params.id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Subject not found' });
+    await audit(req.user.id, 'subject_update', 'subject', req.params.id, parsed.data);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A subject with this subject code already exists' });
+    throw err;
+  }
+}));
+
+router.delete('/subjects/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  try {
+    const { rowCount } = await db.query('DELETE FROM subjects WHERE id = $1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Subject not found' });
+    await audit(req.user.id, 'subject_delete', 'subject', req.params.id);
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === '23503') return res.status(409).json({ error: 'Cannot delete subject with enrolled students, timetable slots, or marks.' });
+    throw err;
+  }
+}));
+
+// ---------------------------------------------------------------- FAQ management
+router.get('/faqs', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, question, answer, category, is_published,
+            to_char(created_at, 'YYYY-MM-DD') AS created_at,
+            to_char(updated_at, 'YYYY-MM-DD') AS updated_at
+       FROM faqs
+      ORDER BY category, created_at DESC`
+  );
+  res.json({ faqs: rows });
+}));
+
+const faqSchema = z.object({
+  question: z.string().trim().min(3).max(500),
+  answer: z.string().trim().min(3).max(3000),
+  category: z.string().trim().min(2).max(50).default('General'),
+  is_published: z.boolean().default(true),
+}).strict();
+
+router.post('/faqs', asyncHandler(async (req, res) => {
+  const parsed = faqSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { question, answer, category, is_published } = parsed.data;
+
+  const { rows } = await db.query(
+    `INSERT INTO faqs (question, answer, category, is_published)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, question, answer, category, is_published, to_char(created_at, 'YYYY-MM-DD') AS created_at`,
+    [question, answer, category, is_published]
+  );
+  await audit(req.user.id, 'faq_create', 'faq', rows[0].id, { question, category });
+  res.status(201).json({ faq: rows[0] });
+}));
+
+router.put('/faqs/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = faqSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { question, answer, category, is_published } = parsed.data;
+
+  const { rowCount } = await db.query(
+    `UPDATE faqs
+        SET question = $1, answer = $2, category = $3, is_published = $4, updated_at = now()
+      WHERE id = $5`,
+    [question, answer, category, is_published, req.params.id]
+  );
+  if (!rowCount) return res.status(404).json({ error: 'FAQ not found' });
+  await audit(req.user.id, 'faq_update', 'faq', req.params.id, parsed.data);
+  res.json({ ok: true });
+}));
+
+router.delete('/faqs/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const { rowCount } = await db.query('DELETE FROM faqs WHERE id = $1', [req.params.id]);
+  if (!rowCount) return res.status(404).json({ error: 'FAQ not found' });
+  await audit(req.user.id, 'faq_delete', 'faq', req.params.id);
+  res.status(204).end();
 }));
 
 module.exports = router;

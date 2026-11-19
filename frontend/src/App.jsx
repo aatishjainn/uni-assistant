@@ -5,6 +5,7 @@ import Chat from './pages/Chat.jsx';
 import { GraduationCap } from './components/Icons.jsx';
 
 const Admin = lazy(() => import('./pages/Admin.jsx'));
+const Hod = lazy(() => import('./pages/Hod.jsx'));
 const Campus = lazy(() => import('./pages/Campus.jsx'));
 
 const LoadingScreen = () => (
@@ -94,11 +95,20 @@ export default function App() {
     );
   }
 
+  if (view === 'hod' && user.role === 'hod') {
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <Hod onBack={() => setView('chat')} />
+      </Suspense>
+    );
+  }
+
   return (
     <Chat
       user={user}
       onLogout={logout}
       onAdmin={() => setView('admin')}
+      onHod={() => setView('hod')}
       onMap={openMap}
     />
   );

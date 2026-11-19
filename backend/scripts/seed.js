@@ -210,6 +210,20 @@ const TIMES = [['09:00', '10:00'], ['10:00', '11:00'], ['11:00', '12:00'], ['12:
         ('Library Timings Extended', 'The library will remain open until 8 PM during exams. (dummy notice)', 'library', now(), true),
         ('Holiday Notice', 'The university will be closed for the festival holiday. (dummy notice)', 'general', now(), true)`);
 
+    // Department-specific notices
+    await c.query(
+      `INSERT INTO notices (title, content, category, published_at, is_published, created_by, department_id) VALUES
+        ('CS Department Hackathon 2026', 'Registrations are open for the annual Computer Science Hackathon. Open to BCA and MCA students. (dummy notice)', 'event', now(), true, $1, $2),
+        ('Management Industry Conclave', 'The annual leadership symposium for BBA students will take place next month. (dummy notice)', 'conclave', now(), true, $3, $4)`,
+      [hod1, deptCS, hod2, deptMG]);
+
+    // Pending exams without rooms (to demonstrate pending activities)
+    await c.query(
+      `INSERT INTO examinations (subject_id, exam_type, exam_date, start_time, end_time, classroom_id) VALUES
+        ($1, 'Special Practical Assessment', CURRENT_DATE + 20, '14:00', '16:00', NULL),
+        ($2, 'Executive Viva Voce', CURRENT_DATE + 25, '11:00', '13:00', NULL)`,
+      [subjectId['BCA401'], subjectId['BBA401']]);
+
     await c.query('COMMIT');
     console.log(`Seeded dummy data: ${studentNo - 1} students, ${facultyDefs.length} teachers, 2 HODs, 1 admin.`);
     console.log(`Logins (password for all: ${PASSWORD}):`);

@@ -21,6 +21,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  Building2,
 } from '../components/Icons.jsx';
 
 const PROMPT_CATEGORIES = [
@@ -42,7 +43,7 @@ const PROMPT_CATEGORIES = [
   },
 ];
 
-export default function Chat({ user, onLogout, onAdmin, onMap }) {
+export default function Chat({ user, onLogout, onAdmin, onHod, onMap }) {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -85,11 +86,13 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
       setActiveId(id);
       setMessages(
         r.messages.map((m) => ({
+          messageId: m.id,
           role: m.sender,
           text: m.message,
           sources: m.source_metadata?.sources || [],
           ui: m.source_metadata?.ui || null,
           trace: m.source_metadata?.trace || null,
+          feedbackRating: m.feedback_rating || null,
         }))
       );
     } catch (e) {
@@ -109,6 +112,17 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
     }
   }
 
+  async function handleFeedback(messageId, rating) {
+    try {
+      await api.submitFeedback(messageId, rating);
+      setMessages((prev) =>
+        prev.map((msg) => (msg.messageId === messageId ? { ...msg, feedbackRating: rating } : msg))
+      );
+    } catch (e) {
+      console.error('Feedback submission failed:', e.message);
+    }
+  }
+
   async function send(text) {
     const message = (text ?? input).trim();
     if (!message || loading) return;
@@ -122,11 +136,13 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
       setMessages((m) => [
         ...m,
         {
+          messageId: r.messageId || null,
           role: 'assistant',
           text: r.answer,
           sources: r.sources || [],
           ui: r.ui || null,
           trace: r.trace || null,
+          feedbackRating: null,
         },
       ]);
       if (!activeId) {
@@ -264,6 +280,16 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
               >
                 <ShieldCheck className="w-3.5 h-3.5 text-rose-400" />
                 <span>Admin Control Panel</span>
+              </button>
+            )}
+
+            {user.role === 'hod' && onHod && (
+              <button
+                onClick={() => { setSidebarOpen(false); onHod(); }}
+                className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors text-left"
+              >
+                <Building2 className="w-3.5 h-3.5 text-purple-400" />
+                <span>HOD Department Portal</span>
               </button>
             )}
 
@@ -410,6 +436,9 @@ export default function Chat({ user, onLogout, onAdmin, onMap }) {
                 ui={m.ui}
                 trace={m.trace}
                 onMap={onMap}
+                messageId={m.messageId}
+                feedbackRating={m.feedbackRating}
+                onFeedback={handleFeedback}
               />
             ))}
 

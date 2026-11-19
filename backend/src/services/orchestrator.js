@@ -105,6 +105,20 @@ async function handleMessage({ user, message, history, mode, lastIntent, agent =
   // The classifier said "general question", but the message is clearly about this university's admissions
   if (intent === 'general_education' && ADMISSION_WORDS.test(message)) intent = 'admission_info';
 
+  // Role-specific intent refinement for teacher and HOD
+  if (user.role === 'teacher' && (intent === 'student_next_class' || /\bnext (?:class|lecture|classroom|room)\b/i.test(message))) {
+    intent = 'teacher_next_class';
+  }
+  if (user.role === 'hod') {
+    if (/\b(?:pending|without rooms?|marks? not entered|missing marks?)\b/i.test(message)) intent = 'hod_pending_activities';
+    else if (/\b(?:analytic|aggregat|pass rate|attendance rate|workload)\b/i.test(message)) intent = 'hod_department_analytics';
+    else if (/\b(?:faculty|teachers?)\b/i.test(message) && /\b(?:subject|teach|workload|list|who)\b/i.test(message)) intent = 'hod_faculty_and_subjects';
+    else if (/\b(?:courses?|subjects?|offered)\b/i.test(message) && !/\b(?:admissions?)\b/i.test(message)) intent = 'hod_courses_offered';
+    else if (/\b(?:schedule|timetables?|exams?)\b/i.test(message)) intent = 'hod_schedule_and_exams';
+    else if (/\b(?:department notice|department notices|department bulletin)\b/i.test(message)) intent = 'hod_department_notices';
+    else if (/\b(?:overview|department overview|department summary|my department)\b/i.test(message)) intent = 'hod_department_overview';
+  }
+
   // Short vague follow-ups ("is that all?", "and tomorrow?") continue the previous topic.
   // The role check and the other-person check below still apply to the reused intent.
   if (intent === 'unclear' && continuing && message.length <= 80) intent = lastIntent;

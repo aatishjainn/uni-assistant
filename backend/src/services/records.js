@@ -77,7 +77,7 @@ async function getSemesterSubjects(userId) {
 async function getFacultyTimetable(userId) {
   const { rows } = await db.query(
     `SELECT t.day_of_week, t.start_time, t.end_time, sub.subject_name,
-            c.room_number, c.floor_number, b.building_name
+            c.id AS classroom_id, c.room_number, c.floor_number, b.building_name
        FROM faculty f
        JOIN timetables t ON t.faculty_id = f.id
        JOIN subjects sub ON sub.id = t.subject_id
@@ -123,10 +123,11 @@ async function getDepartments() {
   return rows;
 }
 
-async function getNotices() {
+async function getNotices(departmentId = null) {
   const { rows } = await db.query(
     `SELECT title, content, category, to_char(published_at, 'YYYY-MM-DD') AS published
-       FROM notices WHERE is_published ORDER BY published_at DESC NULLS LAST LIMIT 5`);
+       FROM notices WHERE is_published AND ($1::uuid IS NULL OR department_id IS NULL OR department_id = $1)
+      ORDER BY published_at DESC NULLS LAST LIMIT 10`, [departmentId]);
   return rows;
 }
 

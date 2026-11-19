@@ -4,6 +4,7 @@ const { z } = require('zod');
 const config = require('../config');
 const { handleMessage } = require('../services/orchestrator');
 const db = require('../db');
+const audit = require('../audit');
 const asyncHandler = require('../middleware/asyncHandler');
 const { authenticate } = require('../middleware/auth');
 
@@ -61,13 +62,57 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(503).json({ error: 'The assistant is busy right now. Please try again in a moment.' });
   }
 
-  await db.query(
+  const insertedMsg = await db.query(
     `INSERT INTO chat_messages (session_id, sender, message, source_metadata, created_at) VALUES
        ($1,'user',$2,NULL, clock_timestamp()),
-       ($1,'assistant',$3,$4, clock_timestamp() + interval '1 millisecond')`,
+       ($1,'assistant',$3,$4, clock_timestamp() + interval '1 millisecond')
+     RETURNING id, sender`,
     [sessionIdToUse, message, ai.answer, JSON.stringify({ intent: ai.intent, sources: ai.sources || [], ui: ai.ui || null, ...(ai.trace ? { trace: ai.trace } : {}) })]);
 
-  res.json({ sessionId: sessionIdToUse, answer: ai.answer, sources: ai.sources || [], ui: ai.ui || null, trace: ai.trace || null });
+  const assistantMsg = insertedMsg.rows.find((r) => r.sender === 'assistant') || insertedMsg.rows[1];
+
+  res.json({
+    sessionId: sessionIdToUse,
+    messageId: assistantMsg ? assistantMsg.id : null,
+    answer: ai.answer,
+    sources: ai.sources || [],
+    ui: ai.ui || null,
+    trace: ai.trace || null,
+  });
+}));
+
+const emptyToNull = (v) => (typeof v === 'string' && v.trim() === '' ? null : v);
+const feedbackSchema = z.object({
+  messageId: uuid,
+  rating: z.coerce.number().int().min(1).max(5),
+  comments: z.preprocess(emptyToNull, z.string().trim().max(1000).nullable().optional()),
+}).strict();
+
+router.post('/feedback', asyncHandler(async (req, res) => {
+  const parsed = feedbackSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Valid messageId and rating (1 to 5) are required' });
+  const { messageId, rating, comments } = parsed.data;
+
+  // Verify the assistant message exists in a conversation owned by the caller
+  const chk = await db.query(
+    `SELECT m.id FROM chat_messages m
+       JOIN chat_sessions s ON s.id = m.session_id
+      WHERE m.id = $1 AND s.user_id = $2 AND m.sender = 'assistant'`,
+    [messageId, req.user.id]
+  );
+  if (!chk.rows[0]) return res.status(404).json({ error: 'Assistant message not found in your conversations' });
+
+  const { rows } = await db.query(
+    `INSERT INTO feedback (user_id, message_id, rating, comments)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, message_id)
+     DO UPDATE SET rating = EXCLUDED.rating, comments = EXCLUDED.comments, created_at = now()
+     RETURNING id, rating, comments`,
+    [req.user.id, messageId, rating, comments || null]
+  );
+
+  await audit(req.user.id, 'feedback_submitted', 'feedback', rows[0].id, { messageId, rating });
+  res.json({ ok: true, feedback: rows[0] });
 }));
 
 // List only the caller's conversations
@@ -84,8 +129,12 @@ router.get('/sessions/:id', asyncHandler(async (req, res) => {
     [req.params.id, req.user.id]);
   if (!s.rows[0]) return res.status(404).json({ error: 'Conversation not found' });
   const m = await db.query(
-    'SELECT id, sender, message, source_metadata, created_at FROM chat_messages WHERE session_id = $1 ORDER BY created_at ASC',
-    [req.params.id]);
+    `SELECT m.id, m.sender, m.message, m.source_metadata, m.created_at, f.rating AS feedback_rating
+       FROM chat_messages m
+       LEFT JOIN feedback f ON f.message_id = m.id AND f.user_id = $2
+      WHERE m.session_id = $1
+      ORDER BY m.created_at ASC`,
+    [req.params.id, req.user.id]);
   res.json({ session: s.rows[0], messages: m.rows });
 }));
 

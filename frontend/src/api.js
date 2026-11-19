@@ -44,6 +44,59 @@ export const api = {
   sessions: () => request('/chat/sessions'),
   session: (id) => request(`/chat/sessions/${id}`),
   deleteSession: (id) => request(`/chat/sessions/${id}`, { method: 'DELETE' }),
+  submitFeedback: (messageId, rating, comments = null) =>
+    request('/chat/feedback', { method: 'POST', body: { messageId, rating, comments } }),
+
+  // ---- HOD department assistant & portal ----
+  hodOverview: () => request('/hod/overview'),
+  hodFaculty: () => request('/hod/faculty'),
+  hodCourses: () => request('/hod/courses'),
+  hodScheduleExams: () => request('/hod/schedule-exams'),
+  hodPending: () => request('/hod/pending'),
+  hodAnalytics: () => request('/hod/analytics'),
+  hodNotices: () => request('/hod/notices'),
+  createHodNotice: (fields) => request('/hod/notices', { method: 'POST', body: fields }),
+  toggleHodNotice: (id, is_published) => request(`/hod/notices/${id}`, { method: 'PATCH', body: { is_published } }),
+  hodReport: () => request('/hod/report'),
+  hodReportCsvUrl: () => {
+    const t = getToken();
+    return `/api/hod/report/csv${t ? `?token=${encodeURIComponent(t)}` : ''}`;
+  },
+  hodClassrooms: () => request('/hod/classrooms'),
+  assignHodExamRoom: (id, classroom_id) => request(`/hod/examinations/${id}/classroom`, { method: 'PATCH', body: { classroom_id } }),
+  scheduleHodExam: (fields) => request('/hod/examinations', { method: 'POST', body: fields }),
+
+  // ---- faculty records ----
+  teacherNextClass: () => request('/faculty/me/next-class'),
+
+  // ---- admin panel (admin accounts only; the server enforces this) ----
+  adminUsers: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request('/admin/users' + (q ? `?${q}` : ''));
+  },
+  adminRoles: () => request('/admin/roles'),
+  createUser: (fields) => request('/admin/users', { method: 'POST', body: fields }),
+  updateUser: (id, fields) => request(`/admin/users/${id}`, { method: 'PATCH', body: fields }),
+  adminDepartments: () => request('/admin/departments'),
+  createDepartment: (fields) => request('/admin/departments', { method: 'POST', body: fields }),
+  updateDepartment: (id, fields) => request(`/admin/departments/${id}`, { method: 'PUT', body: fields }),
+  deleteDepartment: (id) => request(`/admin/departments/${id}`, { method: 'DELETE' }),
+  adminFaculty: () => request('/admin/faculty'),
+  assignFacultySubject: (id, fields) => request(`/admin/faculty/${id}/assign-subject`, { method: 'POST', body: fields }),
+  unassignFacultySubject: (id, subjectId) => request(`/admin/faculty/${id}/subjects/${subjectId}`, { method: 'DELETE' }),
+  adminCourses: () => request('/admin/courses'),
+  createCourse: (fields) => request('/admin/courses', { method: 'POST', body: fields }),
+  updateCourse: (id, fields) => request(`/admin/courses/${id}`, { method: 'PUT', body: fields }),
+  deleteCourse: (id) => request(`/admin/courses/${id}`, { method: 'DELETE' }),
+  adminSubjects: () => request('/admin/subjects'),
+  createSubject: (fields) => request('/admin/subjects', { method: 'POST', body: fields }),
+  updateSubject: (id, fields) => request(`/admin/subjects/${id}`, { method: 'PUT', body: fields }),
+  deleteSubject: (id) => request(`/admin/subjects/${id}`, { method: 'DELETE' }),
+  adminFaqs: () => request('/admin/faqs'),
+  createFaq: (fields) => request('/admin/faqs', { method: 'POST', body: fields }),
+  updateFaq: (id, fields) => request(`/admin/faqs/${id}`, { method: 'PUT', body: fields }),
+  deleteFaq: (id) => request(`/admin/faqs/${id}`, { method: 'DELETE' }),
+  publicFaqs: () => request('/faqs'),
 
   // ---- admin panel (admin accounts only; the server enforces this) ----
   documents: () => request('/admin/documents'),
