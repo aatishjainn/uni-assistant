@@ -315,7 +315,3 @@ node scripts/agentDemo.js student1@uni.test
 6. **Hallucination Containment**: The ReAct agent verifies every numeric token in its final draft against the retrieved tool observations.
 
 ---
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
