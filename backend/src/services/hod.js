@@ -5,6 +5,8 @@
 
 const db = require('../db');
 const audit = require('../audit');
+const config = require('../config');
+const { addDays, getCurrentWeekStart, SHORT_DAY_NAMES } = require('./time');
 
 async function getHodDepartment(userId) {
   const { rows } = await db.query(
@@ -163,6 +165,10 @@ async function getDepartmentScheduleAndExams(userId) {
               to_char(e.end_time, 'HH24:MI') AS end_time,
               cr.room_number, b.building_name,
               CASE WHEN e.classroom_id IS NULL THEN TRUE ELSE FALSE END AS missing_room,
+              e.grading_faculty_id,
+              gfu.full_name AS grading_faculty_name,
+              gf.employee_number AS grading_faculty_employee_number,
+              to_char(e.grading_assigned_at, 'YYYY-MM-DD') AS grading_assigned_at,
               (SELECT COUNT(*)::int FROM student_marks m WHERE m.examination_id = e.id) AS marks_entered,
               (SELECT COUNT(DISTINCT en.student_id)::int FROM student_enrollments en WHERE en.subject_id = sub.id) AS total_enrolled
          FROM examinations e
@@ -170,6 +176,8 @@ async function getDepartmentScheduleAndExams(userId) {
          JOIN courses c ON c.id = sub.course_id
          LEFT JOIN classrooms cr ON cr.id = e.classroom_id
          LEFT JOIN buildings b ON b.id = cr.building_id
+         LEFT JOIN faculty gf ON gf.id = e.grading_faculty_id
+         LEFT JOIN users gfu ON gfu.id = gf.user_id
         WHERE c.department_id = $1
         ORDER BY e.exam_date DESC, e.start_time`,
       [dept.id]
@@ -202,9 +210,16 @@ async function getDepartmentPendingActivities(userId) {
 
   // 2. Completed examinations missing marks entry
   const marksMissingRes = await db.query(
-    `SELECT e.id, sub.subject_code, sub.subject_name, c.course_name, e.exam_type,
+    `SELECT e.id, sub.id AS subject_id, sub.subject_code, sub.subject_name, c.course_name, sub.semester, e.exam_type,
             to_char(e.exam_date, 'YYYY-MM-DD') AS exam_date,
+            to_char(e.start_time, 'HH24:MI') AS start_time,
+            to_char(e.end_time, 'HH24:MI') AS end_time,
             cr.room_number, b.building_name,
+            e.grading_faculty_id,
+            gfu.full_name AS grading_faculty_name,
+            gf.employee_number AS grading_faculty_employee_number,
+            to_char(e.grading_assigned_at, 'YYYY-MM-DD') AS grading_assigned_at,
+            (SELECT fs.faculty_id FROM faculty_subjects fs WHERE fs.subject_id = sub.id LIMIT 1) AS default_faculty_id,
             (SELECT COUNT(DISTINCT en.student_id)::int FROM student_enrollments en WHERE en.subject_id = sub.id) AS enrolled_students,
             (SELECT COUNT(*)::int FROM student_marks m WHERE m.examination_id = e.id) AS marks_entered
        FROM examinations e
@@ -212,6 +227,8 @@ async function getDepartmentPendingActivities(userId) {
        JOIN courses c ON c.id = sub.course_id
        LEFT JOIN classrooms cr ON cr.id = e.classroom_id
        LEFT JOIN buildings b ON b.id = cr.building_id
+       LEFT JOIN faculty gf ON gf.id = e.grading_faculty_id
+       LEFT JOIN users gfu ON gfu.id = gf.user_id
       WHERE c.department_id = $1
         AND e.exam_date <= CURRENT_DATE
         AND (SELECT COUNT(*)::int FROM student_marks m WHERE m.examination_id = e.id) <
@@ -231,14 +248,97 @@ async function getDepartmentPendingActivities(userId) {
     [dept.id]
   );
 
-  const total = examsWithoutRoomsRes.rowCount + marksMissingRes.rowCount + unassignedSubjectsRes.rowCount;
+  // 4. Classes missing weekly attendance for the current week
+  const currentWeekStart = getCurrentWeekStart(config.tz);
+  const currentWeekEnd = addDays(currentWeekStart, 6);
+  const missingAttendanceRes = await db.query(
+    `SELECT DISTINCT ON (sub.id)
+            sub.id AS subject_id, sub.subject_code, sub.subject_name, c.course_name, sub.semester,
+            f.id AS faculty_id, u.full_name AS faculty_name, f.employee_number AS faculty_employee_number,
+            u.email AS faculty_email,
+            (SELECT COUNT(DISTINCT en.student_id)::int FROM student_enrollments en WHERE en.subject_id = sub.id) AS enrolled_students,
+            COALESCE(
+              (SELECT array_agg(DISTINCT t.day_of_week ORDER BY t.day_of_week)
+                 FROM timetables t
+                WHERE t.subject_id = sub.id AND t.faculty_id = f.id),
+              '{}'
+            ) AS timetable_days,
+            EXISTS (
+              SELECT 1 FROM audit_logs al
+               WHERE al.action = 'hod_attendance_reminder'
+                 AND al.entity_id = sub.id
+                 AND al.details->>'week_start' = $2
+            ) AS reminded
+       FROM subjects sub
+       JOIN courses c ON c.id = sub.course_id
+       JOIN faculty_subjects fs ON sub.id = fs.subject_id
+       JOIN faculty f ON f.id = fs.faculty_id
+       JOIN users u ON u.id = f.user_id
+      WHERE c.department_id = $1
+        AND u.is_active = TRUE
+        AND EXISTS (SELECT 1 FROM student_enrollments en WHERE en.subject_id = sub.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM weekly_attendance_submissions was
+           WHERE was.subject_id = sub.id AND was.week_start = $2::date
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM attendance a
+           WHERE a.subject_id = sub.id AND a.class_date BETWEEN $2::date AND $3::date
+        )
+      ORDER BY sub.id, sub.subject_code`,
+    [dept.id, currentWeekStart, currentWeekEnd]
+  );
+
+  const missingAttendance = (missingAttendanceRes.rows || []).map((r) => ({
+    subject_id: r.subject_id,
+    subject_code: r.subject_code,
+    subject_name: r.subject_name,
+    course_name: r.course_name,
+    semester: r.semester,
+    faculty_id: r.faculty_id,
+    faculty_name: r.faculty_name,
+    faculty_employee_number: r.faculty_employee_number,
+    faculty_email: r.faculty_email,
+    enrolled_students: r.enrolled_students,
+    week_start: currentWeekStart,
+    week_end: currentWeekEnd,
+    scheduled_days: (r.timetable_days || []).map((d) => SHORT_DAY_NAMES[d]).filter(Boolean),
+    reminded: Boolean(r.reminded),
+  }));
+
+  // 5. Subjects without weekly timetable slots
+  const unscheduledSubjectsRes = await db.query(
+    `SELECT DISTINCT ON (sub.id)
+            sub.id, sub.subject_code, sub.subject_name, c.course_name, sub.semester,
+            f.id AS faculty_id, u.full_name AS faculty_name, f.employee_number AS faculty_employee_number
+       FROM subjects sub
+       JOIN courses c ON c.id = sub.course_id
+       LEFT JOIN faculty_subjects fs ON sub.id = fs.subject_id
+       LEFT JOIN faculty f ON f.id = fs.faculty_id
+       LEFT JOIN users u ON u.id = f.user_id
+      WHERE c.department_id = $1
+        AND NOT EXISTS (SELECT 1 FROM timetables t WHERE t.subject_id = sub.id)
+      ORDER BY sub.id, sub.subject_code`,
+    [dept.id]
+  );
+
+  const unscheduledSubjects = unscheduledSubjectsRes.rows || [];
+
+  const total =
+    (examsWithoutRoomsRes.rows?.length || 0) +
+    (marksMissingRes.rows?.length || 0) +
+    (unassignedSubjectsRes.rows?.length || 0) +
+    missingAttendance.length +
+    unscheduledSubjects.length;
 
   return {
     department: dept.department_name,
     total_pending_count: total,
-    exams_without_rooms: examsWithoutRoomsRes.rows,
-    marks_not_entered: marksMissingRes.rows,
-    unassigned_subjects: unassignedSubjectsRes.rows,
+    exams_without_rooms: examsWithoutRoomsRes.rows || [],
+    marks_not_entered: marksMissingRes.rows || [],
+    unassigned_subjects: unassignedSubjectsRes.rows || [],
+    missing_attendance: missingAttendance,
+    unscheduled_subjects: unscheduledSubjects,
   };
 }
 
@@ -498,6 +598,22 @@ async function generateDepartmentReportCsv(userId) {
     ...report.pending.unassigned_subjects.map((u) =>
       rowToCsv(['Unassigned Subject', u.subject_code, u.subject_name, `Course: ${u.course_name}, Sem: ${u.semester}`])
     ),
+    ...(report.pending.missing_attendance || []).map((ma) =>
+      rowToCsv([
+        'Missing Weekly Attendance',
+        ma.subject_code,
+        ma.subject_name,
+        `Faculty: ${ma.faculty_name}, Week: ${ma.week_start} to ${ma.week_end}`,
+      ])
+    ),
+    ...(report.pending.unscheduled_subjects || []).map((us) =>
+      rowToCsv([
+        'No Timetable Slot',
+        us.subject_code,
+        us.subject_name,
+        `Course: ${us.course_name}, Sem: ${us.semester}, Faculty: ${us.faculty_name || 'Unassigned'}`,
+      ])
+    ),
   ];
 
   return lines.join('\r\n');
@@ -608,6 +724,270 @@ async function scheduleExamination(userId, data) {
   return rows[0];
 }
 
+async function assignExamGradingFaculty(userId, examId, facultyId) {
+  const dept = await getHodDepartment(userId);
+
+  const examCheck = await db.query(
+    `SELECT e.id, e.exam_type, s.subject_code, s.subject_name
+       FROM examinations e
+       JOIN subjects s ON s.id = e.subject_id
+       JOIN courses c ON c.id = s.course_id
+      WHERE e.id = $1 AND c.department_id = $2`,
+    [examId, dept.id]
+  );
+
+  if (!examCheck.rows[0]) {
+    const err = new Error('Examination not found in your department');
+    err.status = 404;
+    throw err;
+  }
+
+  let facultyRow = null;
+  if (facultyId) {
+    const facCheck = await db.query(
+      `SELECT f.id, u.full_name, f.employee_number
+         FROM faculty f
+         JOIN users u ON u.id = f.user_id
+        WHERE f.id = $1 AND f.department_id = $2 AND u.is_active = TRUE`,
+      [facultyId, dept.id]
+    );
+    if (!facCheck.rows[0]) {
+      const err = new Error('Selected faculty member does not belong to your department or is inactive');
+      err.status = 400;
+      throw err;
+    }
+    facultyRow = facCheck.rows[0];
+  }
+
+  const { rows } = await db.query(
+    `UPDATE examinations
+        SET grading_faculty_id = $1::uuid,
+            grading_assigned_at = CASE WHEN $1::uuid IS NULL THEN NULL ELSE now() END,
+            grading_assigned_by = $2::uuid
+      WHERE id = $3
+     RETURNING id, exam_type, to_char(exam_date, 'YYYY-MM-DD') AS exam_date,
+               grading_faculty_id, to_char(grading_assigned_at, 'YYYY-MM-DD') AS grading_assigned_at`,
+    [facultyId || null, facultyId ? userId : null, examId]
+  );
+
+  await audit(userId, 'hod_assign_exam_grading', 'examination', examId, {
+    faculty_id: facultyId || null,
+    faculty_name: facultyRow?.full_name || null,
+    department_id: dept.id,
+  });
+
+  return {
+    ...rows[0],
+    grading_faculty_name: facultyRow?.full_name || null,
+    grading_faculty_employee_number: facultyRow?.employee_number || null,
+  };
+}
+
+async function assignSubjectFaculty(userId, subjectId, facultyId, academicYear = '2026-27') {
+  const dept = await getHodDepartment(userId);
+
+  const subjCheck = await db.query(
+    `SELECT s.id, s.subject_code, s.subject_name
+       FROM subjects s
+       JOIN courses c ON c.id = s.course_id
+      WHERE s.id = $1 AND c.department_id = $2`,
+    [subjectId, dept.id]
+  );
+
+  if (!subjCheck.rows[0]) {
+    const err = new Error('Subject not found in your department');
+    err.status = 404;
+    throw err;
+  }
+
+  const facCheck = await db.query(
+    `SELECT f.id, u.full_name, f.employee_number
+       FROM faculty f
+       JOIN users u ON u.id = f.user_id
+      WHERE f.id = $1 AND f.department_id = $2 AND u.is_active = TRUE`,
+    [facultyId, dept.id]
+  );
+
+  if (!facCheck.rows[0]) {
+    const err = new Error('Selected faculty member does not belong to your department or is inactive');
+    err.status = 400;
+    throw err;
+  }
+
+  await db.query(
+    `INSERT INTO faculty_subjects (faculty_id, subject_id, academic_year)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (faculty_id, subject_id, academic_year) DO NOTHING`,
+    [facultyId, subjectId, academicYear]
+  );
+
+  await audit(userId, 'hod_assign_subject_faculty', 'subject', subjectId, {
+    faculty_id: facultyId,
+    faculty_name: facCheck.rows[0].full_name,
+    academic_year: academicYear,
+    department_id: dept.id,
+  });
+
+  return {
+    subject_id: subjectId,
+    faculty_id: facultyId,
+    faculty_name: facCheck.rows[0].full_name,
+    academic_year: academicYear,
+  };
+}
+
+async function sendAttendanceReminder(userId, subjectId, weekStart) {
+  const dept = await getHodDepartment(userId);
+
+  const { rows } = await db.query(
+    `SELECT sub.id, sub.subject_code, sub.subject_name,
+            f.id AS faculty_id, u.full_name AS faculty_name
+       FROM subjects sub
+       JOIN courses c ON c.id = sub.course_id
+       JOIN faculty_subjects fs ON sub.id = fs.subject_id
+       JOIN faculty f ON f.id = fs.faculty_id
+       JOIN users u ON u.id = f.user_id
+      WHERE sub.id = $1 AND c.department_id = $2
+      LIMIT 1`,
+    [subjectId, dept.id]
+  );
+
+  if (!rows[0]) {
+    const err = new Error('Subject or assigned faculty not found in your department');
+    err.status = 404;
+    throw err;
+  }
+
+  const target = rows[0];
+  const title = `Weekly Attendance Reminder: ${target.subject_code} (Week of ${weekStart})`;
+  const content = `${target.faculty_name}, please download the blank weekly attendance CSV and upload the filled attendance (P for Present, A for Absent) for ${target.subject_code} - ${target.subject_name} for the week starting ${weekStart}.`;
+
+  await db.query(
+    `INSERT INTO notices (title, content, category, is_published, published_at, created_by, department_id)
+     VALUES ($1, $2, 'Academics', TRUE, now(), $3, $4)`,
+    [title, content, userId, dept.id]
+  );
+
+  await audit(userId, 'hod_attendance_reminder', 'subject', subjectId, {
+    subject_code: target.subject_code,
+    faculty_id: target.faculty_id,
+    faculty_name: target.faculty_name,
+    week_start: weekStart,
+    department_id: dept.id,
+  });
+
+  return {
+    success: true,
+    subject_id: subjectId,
+    subject_code: target.subject_code,
+    faculty_name: target.faculty_name,
+    week_start: weekStart,
+  };
+}
+
+async function scheduleSubjectTimetableSlot(userId, subjectId, { faculty_id, classroom_id, day_of_week, start_time, end_time }) {
+  const dept = await getHodDepartment(userId);
+
+  const subjCheck = await db.query(
+    `SELECT s.id, s.subject_code, s.subject_name, s.course_id, s.semester, c.course_name
+       FROM subjects s
+       JOIN courses c ON c.id = s.course_id
+      WHERE s.id = $1 AND c.department_id = $2`,
+    [subjectId, dept.id]
+  );
+  if (!subjCheck.rows[0]) {
+    const err = new Error('Subject not found in your department');
+    err.status = 404;
+    throw err;
+  }
+  const subj = subjCheck.rows[0];
+
+  const facCheck = await db.query(
+    `SELECT f.id, u.full_name
+       FROM faculty f
+       JOIN users u ON u.id = f.user_id
+      WHERE f.id = $1 AND f.department_id = $2 AND u.is_active = TRUE`,
+    [faculty_id, dept.id]
+  );
+  if (!facCheck.rows[0]) {
+    const err = new Error('Selected faculty member does not belong to your department or is inactive');
+    err.status = 400;
+    throw err;
+  }
+
+  const roomCheck = await db.query('SELECT id, room_number FROM classrooms WHERE id = $1', [classroom_id]);
+  if (!roomCheck.rows[0]) {
+    const err = new Error('Selected classroom does not exist');
+    err.status = 400;
+    throw err;
+  }
+
+  // Clash check: same room, same faculty, OR same student batch (course + semester) overlapping on day_of_week
+  const clashRes = await db.query(
+    `SELECT t.id, sub.subject_code, sub.course_id, sub.semester, c.course_name,
+            t.classroom_id, t.faculty_id, cr.room_number, u.full_name AS teacher_name,
+            to_char(t.start_time, 'HH24:MI') AS start_time, to_char(t.end_time, 'HH24:MI') AS end_time
+       FROM timetables t
+       JOIN subjects sub ON sub.id = t.subject_id
+       JOIN courses c ON c.id = sub.course_id
+       JOIN classrooms cr ON cr.id = t.classroom_id
+       JOIN faculty f ON f.id = t.faculty_id
+       JOIN users u ON u.id = f.user_id
+      WHERE t.day_of_week = $1
+        AND t.start_time < $3::time
+        AND t.end_time > $2::time
+        AND (
+          t.classroom_id = $4
+          OR t.faculty_id = $5
+          OR (sub.course_id = $6 AND sub.semester = $7)
+        )
+      LIMIT 1`,
+    [day_of_week, start_time, end_time, classroom_id, faculty_id, subj.course_id, subj.semester]
+  );
+  if (clashRes.rows[0]) {
+    const cl = clashRes.rows[0];
+    const reasons = [];
+    if (cl.classroom_id === classroom_id) reasons.push(`Room conflict (${cl.room_number})`);
+    if (cl.faculty_id === faculty_id) reasons.push(`Faculty conflict (${cl.teacher_name})`);
+    if (cl.course_id === subj.course_id && cl.semester === subj.semester) {
+      reasons.push(`Student batch conflict (${cl.course_name} Sem ${cl.semester})`);
+    }
+    const dayName = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][day_of_week] || `Day ${day_of_week}`;
+    const err = new Error(
+      `Class clash detected (${reasons.join(', ')}): conflicts with ${cl.subject_code} on ${dayName} ${cl.start_time}-${cl.end_time} in ${cl.room_number} (${cl.teacher_name}).`
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const { rows } = await db.query(
+    `INSERT INTO timetables (subject_id, faculty_id, classroom_id, day_of_week, start_time, end_time)
+     VALUES ($1, $2, $3, $4, $5::time, $6::time)
+     RETURNING id, subject_id, faculty_id, classroom_id, day_of_week,
+               to_char(start_time, 'HH24:MI') AS start_time,
+               to_char(end_time, 'HH24:MI') AS end_time`,
+    [subjectId, faculty_id, classroom_id, day_of_week, start_time, end_time]
+  );
+
+  await audit(userId, 'hod_schedule_timetable_slot', 'timetable', rows[0].id, {
+    subject_id: subjectId,
+    subject_code: subjCheck.rows[0].subject_code,
+    faculty_id,
+    classroom_id,
+    day_of_week,
+    start_time,
+    end_time,
+    department_id: dept.id,
+  });
+
+  return {
+    ...rows[0],
+    subject_code: subjCheck.rows[0].subject_code,
+    faculty_name: facCheck.rows[0].full_name,
+    room_number: roomCheck.rows[0].room_number,
+  };
+}
+
 module.exports = {
   getHodDepartment,
   getDepartmentOverview,
@@ -624,4 +1004,8 @@ module.exports = {
   getClassrooms,
   assignExamClassroom,
   scheduleExamination,
+  assignExamGradingFaculty,
+  assignSubjectFaculty,
+  sendAttendanceReminder,
+  scheduleSubjectTimetableSlot,
 };

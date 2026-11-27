@@ -61,6 +61,15 @@ export default function Hod({ onBack }) {
   const [selectedRooms, setSelectedRooms] = useState({});
   const [assigningRoomId, setAssigningRoomId] = useState(null);
 
+  // Pending task faculty assignment (exam grading & subject coverage)
+  const [selectedGradingFaculty, setSelectedGradingFaculty] = useState({});
+  const [assigningGradingId, setAssigningGradingId] = useState(null);
+  const [selectedSubjectFaculty, setSelectedSubjectFaculty] = useState({});
+  const [assigningSubjectId, setAssigningSubjectId] = useState(null);
+  const [remindingAttendanceId, setRemindingAttendanceId] = useState(null);
+  const [timetableForms, setTimetableForms] = useState({});
+  const [schedulingTimetableId, setSchedulingTimetableId] = useState(null);
+
   const [showExamModal, setShowExamModal] = useState(false);
   const [schedulingExam, setSchedulingExam] = useState(false);
   const [examForm, setExamForm] = useState({
@@ -70,6 +79,18 @@ export default function Hod({ onBack }) {
     start_time: '10:00',
     end_time: '12:00',
     classroom_id: '',
+  });
+
+  const [showSlotModal, setShowSlotModal] = useState(false);
+  const [schedulingSlot, setSchedulingSlot] = useState(false);
+  const [slotClashError, setSlotClashError] = useState('');
+  const [slotForm, setSlotForm] = useState({
+    subject_id: '',
+    faculty_id: '',
+    classroom_id: '',
+    day_of_week: '1',
+    start_time: '09:00',
+    end_time: '10:00',
   });
 
   const loadAll = useCallback(async () => {
@@ -158,6 +179,123 @@ export default function Hod({ onBack }) {
       setError(err.message || 'Failed to allocate classroom');
     } finally {
       setAssigningRoomId(null);
+    }
+  };
+
+  const handleAssignGrading = async (examId, fallbackFacultyId = '') => {
+    const facultyId = selectedGradingFaculty[examId] ?? fallbackFacultyId;
+    if (!facultyId) return;
+    setAssigningGradingId(examId);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await api.assignHodExamGrading(examId, facultyId);
+      const assigneeName = res?.examination?.grading_faculty_name || 'selected faculty';
+      setSuccess(`Exam grading task assigned to ${assigneeName}. They can now enter marks from their Faculty Portal.`);
+      await loadAll();
+    } catch (err) {
+      setError(err.message || 'Failed to assign grading task');
+    } finally {
+      setAssigningGradingId(null);
+    }
+  };
+
+  const handleAssignSubjectFaculty = async (subjectId) => {
+    const facultyId = selectedSubjectFaculty[subjectId];
+    if (!facultyId) return;
+    setAssigningSubjectId(subjectId);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await api.assignHodSubjectFaculty(subjectId, facultyId);
+      setSuccess(`Subject assigned to ${res?.faculty_name || 'faculty member'} successfully.`);
+      await loadAll();
+    } catch (err) {
+      setError(err.message || 'Failed to assign faculty to subject');
+    } finally {
+      setAssigningSubjectId(null);
+    }
+  };
+
+  const handleRemindAttendance = async (subjectId, weekStart) => {
+    setRemindingAttendanceId(subjectId);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await api.remindHodAttendance(subjectId, weekStart);
+      setSuccess(
+        `Weekly attendance reminder sent to ${res.faculty_name} for ${res.subject_code} (Week of ${res.week_start}).`
+      );
+      await loadAll();
+    } catch (err) {
+      setError(err.message || 'Failed to send attendance reminder');
+    } finally {
+      setRemindingAttendanceId(null);
+    }
+  };
+
+  const handleScheduleTimetableSlot = async (subject) => {
+    const form = timetableForms[subject.id] || {};
+    const faculty_id = form.faculty_id ?? subject.faculty_id ?? '';
+    const classroom_id = form.classroom_id || '';
+    const day_of_week = Number(form.day_of_week || 4);
+    const start_time = form.start_time || '10:00';
+    const end_time = form.end_time || '11:00';
+
+    if (!faculty_id || !classroom_id) {
+      setError('Please select both a faculty member and a classroom to schedule the timetable slot.');
+      return;
+    }
+
+    setSchedulingTimetableId(subject.id);
+    setError('');
+    setSuccess('');
+    try {
+      const res = await api.scheduleHodTimetable(subject.id, {
+        faculty_id,
+        classroom_id,
+        day_of_week,
+        start_time,
+        end_time,
+      });
+      setSuccess(
+        `Scheduled weekly class for ${res.timetable?.subject_code || subject.subject_code} (${start_time}-${end_time} in ${res.timetable?.room_number || 'room'}).`
+      );
+      await loadAll();
+    } catch (err) {
+      setError(err.message || 'Failed to schedule timetable slot');
+    } finally {
+      setSchedulingTimetableId(null);
+    }
+  };
+
+  const handleAddClassSlot = async (e) => {
+    e.preventDefault();
+    if (!slotForm.subject_id || !slotForm.faculty_id || !slotForm.classroom_id) {
+      setSlotClashError('Please choose subject, faculty, and classroom.');
+      return;
+    }
+    setSchedulingSlot(true);
+    setSlotClashError('');
+    setError('');
+    setSuccess('');
+    try {
+      const res = await api.scheduleHodTimetable(slotForm.subject_id, {
+        faculty_id: slotForm.faculty_id,
+        classroom_id: slotForm.classroom_id,
+        day_of_week: Number(slotForm.day_of_week),
+        start_time: slotForm.start_time,
+        end_time: slotForm.end_time,
+      });
+      setSuccess(
+        `Class slot added: ${res.timetable?.subject_code || ''} (${slotForm.start_time}-${slotForm.end_time} in ${res.timetable?.room_number || 'room'}).`
+      );
+      setShowSlotModal(false);
+      await loadAll();
+    } catch (err) {
+      setSlotClashError(err.message || 'Class time slot clashes with an existing class');
+    } finally {
+      setSchedulingSlot(false);
     }
   };
 
@@ -388,7 +526,16 @@ export default function Hod({ onBack }) {
                   <div className={`text-2xl font-bold ${(overview?.counts?.pending_activities || 0) > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
                     {overview?.counts?.pending_activities ?? '—'}
                   </div>
-                  <p className="text-[11px] text-slate-400">Marks missing or rooms unassigned</p>
+                  <div className="flex items-center justify-between gap-2 pt-0.5">
+                    <p className="text-[11px] text-slate-400">Marks missing or rooms unassigned</p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('Pending')}
+                      className="text-[11px] font-semibold text-purple-600 hover:text-purple-700 whitespace-nowrap cursor-pointer"
+                    >
+                      Work on items &rarr;
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -730,6 +877,7 @@ export default function Hod({ onBack }) {
                       <th className="p-3">Type</th>
                       <th className="p-3">Course & Subject</th>
                       <th className="p-3">Classroom / Hall</th>
+                      <th className="p-3">Grading Assignee</th>
                       <th className="p-3 text-center">Marks Status</th>
                     </tr>
                   </thead>
@@ -760,6 +908,23 @@ export default function Hod({ onBack }) {
                             </div>
                           )}
                         </td>
+                        <td className="p-3">
+                          {e.grading_faculty_name ? (
+                            <div>
+                              <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 text-[11px] font-semibold border border-purple-200">
+                                {e.grading_faculty_name}
+                              </span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('Pending')}
+                              className="text-[11px] font-medium text-slate-400 hover:text-purple-600 cursor-pointer"
+                            >
+                              Unassigned
+                            </button>
+                          )}
+                        </td>
                         <td className="p-3 text-center">
                           {e.marks_entered >= e.total_enrolled && e.total_enrolled > 0 ? (
                             <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-200">
@@ -779,9 +944,145 @@ export default function Hod({ onBack }) {
 
               {/* Timetable slots */}
               <div className="rounded-2xl border border-slate-200/80 bg-white shadow-2xs overflow-hidden">
-                <div className="p-3.5 bg-slate-50 border-b border-slate-200/80 text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  Weekly Class Timetable
+                <div className="p-3.5 bg-slate-50 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Weekly Class Timetable
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSlotModal(!showSlotModal);
+                      setSlotClashError('');
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold px-3 py-1.5 transition-all cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{showSlotModal ? 'Close Slot Form' : 'Schedule Class Slot'}</span>
+                  </button>
                 </div>
+
+                {showSlotModal && (
+                  <form onSubmit={handleAddClassSlot} className="p-4 bg-purple-50/50 border-b border-purple-200 space-y-3">
+                    <div className="text-xs font-bold text-purple-900 uppercase tracking-wider">
+                      Add Weekly Class Slot (Checks Room, Faculty &amp; Student Batch Clashes)
+                    </div>
+
+                    {slotClashError && (
+                      <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <span>{slotClashError}</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Subject *</label>
+                        <select
+                          className={fieldStyle}
+                          value={slotForm.subject_id}
+                          onChange={(e) => setSlotForm({ ...slotForm, subject_id: e.target.value })}
+                          required
+                        >
+                          <option value="">Select Subject...</option>
+                          {coursesData?.subjects?.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.subject_code} - {s.subject_name} ({s.course_name} Sem {s.semester})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Faculty *</label>
+                        <select
+                          className={fieldStyle}
+                          value={slotForm.faculty_id}
+                          onChange={(e) => setSlotForm({ ...slotForm, faculty_id: e.target.value })}
+                          required
+                        >
+                          <option value="">Select Faculty...</option>
+                          {(facultyData?.faculty || []).filter((f) => f.is_active !== false).map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.full_name} ({f.employee_number})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Classroom *</label>
+                        <select
+                          className={fieldStyle}
+                          value={slotForm.classroom_id}
+                          onChange={(e) => setSlotForm({ ...slotForm, classroom_id: e.target.value })}
+                          required
+                        >
+                          <option value="">Select Classroom...</option>
+                          {classrooms.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.room_number} &middot; {c.building_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Day of Week *</label>
+                        <select
+                          className={fieldStyle}
+                          value={slotForm.day_of_week}
+                          onChange={(e) => setSlotForm({ ...slotForm, day_of_week: e.target.value })}
+                        >
+                          <option value="1">Monday</option>
+                          <option value="2">Tuesday</option>
+                          <option value="3">Wednesday</option>
+                          <option value="4">Thursday</option>
+                          <option value="5">Friday</option>
+                          <option value="6">Saturday</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Start Time *</label>
+                        <input
+                          type="time"
+                          className={fieldStyle}
+                          value={slotForm.start_time}
+                          onChange={(e) => setSlotForm({ ...slotForm, start_time: e.target.value })}
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">End Time *</label>
+                        <input
+                          type="time"
+                          className={fieldStyle}
+                          value={slotForm.end_time}
+                          onChange={(e) => setSlotForm({ ...slotForm, end_time: e.target.value })}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSlotModal(false);
+                          setSlotClashError('');
+                        }}
+                        className={btnSecondary}
+                      >
+                        Cancel
+                      </button>
+                      <button type="submit" disabled={schedulingSlot} className={btnPrimary}>
+                        {schedulingSlot ? 'Checking & Saving...' : 'Add Class Slot'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {scheduleData?.timetable?.map((t) => (
                     <div key={t.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200/60 text-xs space-y-1">
@@ -867,6 +1168,14 @@ export default function Hod({ onBack }) {
                               >
                                 {assigningRoomId === e.id ? 'Allocating...' : 'Allocate Room'}
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('Schedule')}
+                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 transition-all cursor-pointer whitespace-nowrap"
+                              >
+                                <span>Go to Schedule</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -882,15 +1191,79 @@ export default function Hod({ onBack }) {
                         <span>Completed Examinations Missing Student Marks ({pendingData.marks_not_entered.length})</span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {pendingData.marks_not_entered.map((m) => (
-                          <div key={m.id} className="p-3 rounded-xl bg-white border border-amber-200 text-xs space-y-1">
-                            <div className="font-bold text-slate-900">{m.exam_type} &middot; {m.subject_code}</div>
-                            <div className="text-slate-600">{m.subject_name} ({m.course_name})</div>
-                            <div className="text-amber-700 font-semibold text-[11px]">
-                              Graded: {m.marks_entered} / {m.enrolled_students} enrolled students
+                        {pendingData.marks_not_entered.map((m) => {
+                          const activeFaculty = (facultyData?.faculty || []).filter((f) => f.is_active !== false);
+                          const currentFacultySelection =
+                            selectedGradingFaculty[m.id] ?? m.grading_faculty_id ?? m.default_faculty_id ?? '';
+                          return (
+                            <div key={m.id} className="p-3.5 rounded-xl bg-white border border-amber-200 text-xs space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-bold text-slate-900">{m.exam_type} &middot; {m.subject_code}</div>
+                                  <div className="text-slate-600 text-[11px]">{m.subject_name} ({m.course_name})</div>
+                                </div>
+                                {m.grading_faculty_id ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 whitespace-nowrap">
+                                    Assigned: {m.grading_faculty_name}
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 whitespace-nowrap">
+                                    Needs Grading
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="text-amber-700 font-semibold text-[11px] flex flex-wrap items-center justify-between gap-2">
+                                <span>
+                                  Date: {m.exam_date}
+                                  {m.room_number ? ` · ${m.room_number}` : ''}
+                                </span>
+                                <span>
+                                  Graded: {m.marks_entered} / {m.enrolled_students} enrolled students
+                                </span>
+                              </div>
+
+                              {/* Inline Faculty Grading Assignment */}
+                              <div className="pt-2 border-t border-amber-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                <select
+                                  aria-label={`Assign grading faculty for ${m.subject_code} ${m.exam_type}`}
+                                  className="flex-1 text-[11px] rounded-lg border border-amber-300 bg-white px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                  value={currentFacultySelection}
+                                  onChange={(ev) =>
+                                    setSelectedGradingFaculty({ ...selectedGradingFaculty, [m.id]: ev.target.value })
+                                  }
+                                >
+                                  <option value="">Select Faculty to Grade...</option>
+                                  {activeFaculty.map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.full_name} ({f.employee_number})
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={!currentFacultySelection || assigningGradingId === m.id}
+                                  onClick={() => handleAssignGrading(m.id, currentFacultySelection)}
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold px-3 py-1.5 disabled:opacity-40 transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  {assigningGradingId === m.id
+                                    ? 'Assigning...'
+                                    : m.grading_faculty_id
+                                    ? 'Reassign Faculty'
+                                    : 'Assign to Faculty'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('Schedule')}
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  <span>Go to Exams</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -903,12 +1276,251 @@ export default function Hod({ onBack }) {
                         <span>Subjects Without Assigned Faculty ({pendingData.unassigned_subjects.length})</span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {pendingData.unassigned_subjects.map((u) => (
-                          <div key={u.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                            <div className="font-bold text-slate-900">{u.subject_code} &middot; {u.subject_name}</div>
-                            <div className="text-slate-500 text-[11px]">{u.course_name} (Sem {u.semester})</div>
+                        {pendingData.unassigned_subjects.map((u) => {
+                          const activeFaculty = (facultyData?.faculty || []).filter((f) => f.is_active !== false);
+                          const selectedFac = selectedSubjectFaculty[u.id] || '';
+                          return (
+                            <div key={u.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-bold text-slate-900">{u.subject_code} &middot; {u.subject_name}</div>
+                                  <div className="text-slate-500 text-[11px]">{u.course_name} (Sem {u.semester})</div>
+                                </div>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700 whitespace-nowrap">
+                                  Needs Faculty
+                                </span>
+                              </div>
+                              <div className="pt-2 border-t border-slate-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                <select
+                                  aria-label={`Assign faculty for subject ${u.subject_code}`}
+                                  className="flex-1 text-[11px] rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                  value={selectedFac}
+                                  onChange={(ev) =>
+                                    setSelectedSubjectFaculty({ ...selectedSubjectFaculty, [u.id]: ev.target.value })
+                                  }
+                                >
+                                  <option value="">Select Faculty Member...</option>
+                                  {activeFaculty.map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.full_name} ({f.employee_number})
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={!selectedFac || assigningSubjectId === u.id}
+                                  onClick={() => handleAssignSubjectFaculty(u.id)}
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold px-3 py-1.5 disabled:opacity-40 transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  {assigningSubjectId === u.id ? 'Assigning...' : 'Assign Faculty'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('Courses')}
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  <span>Go to Courses</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Missing weekly attendance */}
+                  {pendingData?.missing_attendance?.length > 0 && (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4 shadow-2xs space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-bold text-rose-900 uppercase tracking-wider">
+                        <Calendar className="w-4 h-4 text-rose-600" />
+                        <span>Classes Missing Weekly Attendance ({pendingData.missing_attendance.length})</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {pendingData.missing_attendance.map((ma) => (
+                          <div key={ma.subject_id} className="p-3.5 rounded-xl bg-white border border-rose-200 text-xs space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="font-bold text-slate-900">
+                                  {ma.subject_code} &middot; {ma.subject_name}
+                                </div>
+                                <div className="text-slate-600 text-[11px]">
+                                  {ma.course_name} (Sem {ma.semester}) &middot; Faculty: <strong>{ma.faculty_name}</strong> ({ma.faculty_employee_number})
+                                </div>
+                              </div>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${
+                                  ma.reminded ? 'bg-purple-100 text-purple-800' : 'bg-rose-100 text-rose-700'
+                                }`}
+                              >
+                                {ma.reminded ? 'Reminder Sent' : 'Attendance Missing'}
+                              </span>
+                            </div>
+
+                            <div className="text-[11px] text-rose-700 font-semibold flex flex-wrap items-center justify-between gap-2">
+                              <span>
+                                Week: {ma.week_start} to {ma.week_end}
+                                {ma.scheduled_days?.length ? ` (${ma.scheduled_days.join(', ')})` : ''}
+                              </span>
+                              <span>{ma.enrolled_students} students</span>
+                            </div>
+
+                            <div className="pt-2 border-t border-rose-100 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={remindingAttendanceId === ma.subject_id}
+                                onClick={() => handleRemindAttendance(ma.subject_id, ma.week_start)}
+                                className="inline-flex items-center justify-center gap-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold px-3 py-1.5 disabled:opacity-40 transition-all cursor-pointer whitespace-nowrap"
+                              >
+                                {remindingAttendanceId === ma.subject_id
+                                  ? 'Sending...'
+                                  : ma.reminded
+                                  ? 'Resend Reminder'
+                                  : 'Notify Faculty'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('Faculty')}
+                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 transition-all cursor-pointer whitespace-nowrap"
+                              >
+                                <span>Go to Faculty</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('Analytics')}
+                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 transition-all cursor-pointer whitespace-nowrap"
+                              >
+                                <span>Attendance Analytics</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Unscheduled subjects (no weekly timetable slots) */}
+                  {pendingData?.unscheduled_subjects?.length > 0 && (
+                    <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 shadow-2xs space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 uppercase tracking-wider">
+                        <Calendar className="w-4 h-4 text-indigo-600" />
+                        <span>Subjects Without Weekly Timetable Slots ({pendingData.unscheduled_subjects.length})</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {pendingData.unscheduled_subjects.map((us) => {
+                          const activeFaculty = (facultyData?.faculty || []).filter((f) => f.is_active !== false);
+                          const fState = timetableForms[us.id] || {};
+                          const facultyId = fState.faculty_id ?? us.faculty_id ?? '';
+                          const dayOfWeek = fState.day_of_week ?? '4';
+                          const startTime = fState.start_time ?? '10:00';
+                          const endTime = fState.end_time ?? '11:00';
+                          const classroomId = fState.classroom_id ?? '';
+                          const updateForm = (patch) =>
+                            setTimetableForms((prev) => ({ ...prev, [us.id]: { ...prev[us.id], ...patch } }));
+
+                          return (
+                            <div key={us.id} className="p-3.5 rounded-xl bg-white border border-indigo-200 text-xs space-y-2.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-bold text-slate-900">
+                                    {us.subject_code} &middot; {us.subject_name}
+                                  </div>
+                                  <div className="text-slate-600 text-[11px]">
+                                    {us.course_name} (Sem {us.semester})
+                                    {us.faculty_name ? ` · Assigned: ${us.faculty_name}` : ''}
+                                  </div>
+                                </div>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 whitespace-nowrap">
+                                  No Timetable Slot
+                                </span>
+                              </div>
+
+                              <div className="pt-2 border-t border-indigo-100 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <select
+                                  aria-label={`Faculty for ${us.subject_code} timetable`}
+                                  className="text-[11px] rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                  value={facultyId}
+                                  onChange={(e) => updateForm({ faculty_id: e.target.value })}
+                                >
+                                  <option value="">Select Faculty...</option>
+                                  {activeFaculty.map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.full_name} ({f.employee_number})
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <select
+                                  aria-label={`Classroom for ${us.subject_code} timetable`}
+                                  className="text-[11px] rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                  value={classroomId}
+                                  onChange={(e) => updateForm({ classroom_id: e.target.value })}
+                                >
+                                  <option value="">Select Classroom...</option>
+                                  {classrooms.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.room_number} &middot; {c.building_name}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <select
+                                  aria-label={`Day for ${us.subject_code} timetable`}
+                                  className="text-[11px] rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                  value={dayOfWeek}
+                                  onChange={(e) => updateForm({ day_of_week: e.target.value })}
+                                >
+                                  <option value="1">Monday</option>
+                                  <option value="2">Tuesday</option>
+                                  <option value="3">Wednesday</option>
+                                  <option value="4">Thursday</option>
+                                  <option value="5">Friday</option>
+                                  <option value="6">Saturday</option>
+                                </select>
+
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="time"
+                                    aria-label={`Start time for ${us.subject_code}`}
+                                    className="flex-1 text-[11px] rounded-lg border border-indigo-200 bg-white px-2 py-1 text-slate-800"
+                                    value={startTime}
+                                    onChange={(e) => updateForm({ start_time: e.target.value })}
+                                  />
+                                  <span className="text-slate-400">-</span>
+                                  <input
+                                    type="time"
+                                    aria-label={`End time for ${us.subject_code}`}
+                                    className="flex-1 text-[11px] rounded-lg border border-indigo-200 bg-white px-2 py-1 text-slate-800"
+                                    value={endTime}
+                                    onChange={(e) => updateForm({ end_time: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  disabled={!facultyId || !classroomId || schedulingTimetableId === us.id}
+                                  onClick={() => handleScheduleTimetableSlot(us)}
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold px-3 py-1.5 disabled:opacity-40 transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  {schedulingTimetableId === us.id ? 'Scheduling...' : 'Add Timetable Slot'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('Schedule')}
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold px-2.5 py-1.5 transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  <span>Go to Schedule</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1227,6 +1839,14 @@ export default function Hod({ onBack }) {
                     <div>
                       &bull; Curriculum subjects without assigned teachers:{' '}
                       <strong>{reportData?.pending?.unassigned_subjects?.length ?? 0}</strong>
+                    </div>
+                    <div>
+                      &bull; Classes missing weekly attendance:{' '}
+                      <strong>{reportData?.pending?.missing_attendance?.length ?? 0}</strong>
+                    </div>
+                    <div>
+                      &bull; Subjects without weekly timetable slots:{' '}
+                      <strong>{reportData?.pending?.unscheduled_subjects?.length ?? 0}</strong>
                     </div>
                   </div>
                 </div>

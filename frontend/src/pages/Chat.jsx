@@ -22,6 +22,8 @@ import {
   X,
   ChevronRight,
   Building2,
+  CheckCircle2,
+  FileText,
 } from '../components/Icons.jsx';
 
 const PROMPT_CATEGORIES = [
@@ -43,7 +45,7 @@ const PROMPT_CATEGORIES = [
   },
 ];
 
-export default function Chat({ user, onLogout, onAdmin, onHod, onMap }) {
+export default function Chat({ user, onLogout, onAdmin, onHod, onTeacher, onApplicant, onMap }) {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -53,6 +55,10 @@ export default function Chat({ user, onLogout, onAdmin, onHod, onMap }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingGradingCount, setPendingGradingCount] = useState(0);
+  const [missingAttendanceCount, setMissingAttendanceCount] = useState(0);
+  const [myApplicationsCount, setMyApplicationsCount] = useState(0);
+  const [unseenDecisionsCount, setUnseenDecisionsCount] = useState(0);
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -65,6 +71,26 @@ export default function Chat({ user, onLogout, onAdmin, onHod, onMap }) {
   useEffect(() => {
     loadSessions();
   }, []);
+
+  useEffect(() => {
+    if (user.role === 'teacher') {
+      Promise.all([
+        api.teacherGradingTasks().catch(() => ({ pending_count: 0 })),
+        api.teacherAttendanceSheets().catch(() => ({ missing_count: 0 })),
+      ]).then(([g, a]) => {
+        setPendingGradingCount(g.pending_count || 0);
+        setMissingAttendanceCount(a.missing_count || 0);
+      });
+    } else if (user.role === 'applicant') {
+      api
+        .myAdmissionApplications()
+        .then((r) => {
+          setMyApplicationsCount(r.applications?.length || 0);
+          setUnseenDecisionsCount(r.unseen_decisions_count || 0);
+        })
+        .catch(() => {});
+    }
+  }, [user.role]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -293,6 +319,56 @@ export default function Chat({ user, onLogout, onAdmin, onHod, onMap }) {
               </button>
             )}
 
+            {user.role === 'teacher' && onTeacher && (
+              <>
+                <button
+                  onClick={() => { setSidebarOpen(false); onTeacher('Grading'); }}
+                  className="flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Faculty Grading Portal</span>
+                  </span>
+                  {pendingGradingCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold leading-none">
+                      {pendingGradingCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => { setSidebarOpen(false); onTeacher('Attendance'); }}
+                  className="flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Weekly Attendance</span>
+                  </span>
+                  {missingAttendanceCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold leading-none">
+                      {missingAttendanceCount}
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
+
+            {user.role === 'applicant' && onApplicant && (
+              <button
+                onClick={() => { setSidebarOpen(false); onApplicant('Apply'); }}
+                className="flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors text-left"
+              >
+                <span className="flex items-center gap-2">
+                  <FileText className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Admission Application</span>
+                </span>
+                {unseenDecisionsCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold leading-none">
+                    {unseenDecisionsCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             <button
               onClick={onLogout}
               className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-900/50 transition-colors text-left"
@@ -384,6 +460,76 @@ export default function Chat({ user, onLogout, onAdmin, onHod, onMap }) {
         {/* Message Stream */}
         <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
           <div className="max-w-3xl mx-auto space-y-6">
+            {user.role === 'teacher' && pendingGradingCount > 0 && onTeacher && (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 text-xs text-emerald-950">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    You have <strong>{pendingGradingCount}</strong> assigned {pendingGradingCount === 1 ? 'examination' : 'examinations'} waiting for student marks entry.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onTeacher('Grading')}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 shadow-2xs transition-all self-start sm:self-auto shrink-0 cursor-pointer"
+                >
+                  <span>Open Grading Portal</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {user.role === 'teacher' && missingAttendanceCount > 0 && onTeacher && (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50/70 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 text-xs text-rose-950">
+                  <Calendar className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>
+                    You have <strong>{missingAttendanceCount}</strong> {missingAttendanceCount === 1 ? 'class' : 'classes'} missing weekly attendance CSV upload for this week.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onTeacher('Attendance')}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-3 py-1.5 shadow-2xs transition-all self-start sm:self-auto shrink-0 cursor-pointer"
+                >
+                  <span>Upload Attendance CSV</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {user.role === 'applicant' && onApplicant && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 text-xs text-amber-950">
+                  <FileText className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    {myApplicationsCount > 0
+                      ? `You have ${myApplicationsCount} admission ${myApplicationsCount === 1 ? 'application' : 'applications'} on file. Track status or apply for another course.`
+                      : 'Ready to apply for admission? Fill out the online Admission Application Form.'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  {myApplicationsCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onApplicant('Status')}
+                      className="inline-flex items-center gap-1 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 text-amber-900 text-xs font-semibold px-3 py-1.5 transition-all cursor-pointer"
+                    >
+                      Track Status
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onApplicant('Apply')}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-3 py-1.5 shadow-2xs transition-all cursor-pointer"
+                  >
+                    <span>Admission Form</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {messages.length === 0 && !loading && (
               <div className="pt-8 pb-4 text-center">
                 <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 mb-3 shadow-2xs">

@@ -86,6 +86,63 @@ router.patch('/examinations/:id/classroom', asyncHandler(async (req, res) => {
   res.json({ success: true, examination: updated });
 }));
 
+router.patch('/examinations/:id/grading-assignee', asyncHandler(async (req, res) => {
+  if (!uuid.safeParse(req.params.id).success) return bad(res, 'Invalid examination id');
+  const schema = z.object({
+    faculty_id: z.string().uuid().nullable(),
+  }).strict();
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const updated = await hod.assignExamGradingFaculty(req.user.id, req.params.id, parsed.data.faculty_id);
+  res.json({ success: true, examination: updated });
+}));
+
+router.post('/subjects/:id/assign-faculty', asyncHandler(async (req, res) => {
+  if (!uuid.safeParse(req.params.id).success) return bad(res, 'Invalid subject id');
+  const schema = z.object({
+    faculty_id: z.string().uuid(),
+    academic_year: z.string().trim().min(4).max(20).default('2026-27'),
+  }).strict();
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const result = await hod.assignSubjectFaculty(
+    req.user.id,
+    req.params.id,
+    parsed.data.faculty_id,
+    parsed.data.academic_year
+  );
+  res.json({ success: true, ...result });
+}));
+
+router.post('/attendance/remind', asyncHandler(async (req, res) => {
+  const schema = z.object({
+    subject_id: z.string().uuid(),
+    week_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'week_start must be YYYY-MM-DD'),
+  }).strict();
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  res.json(await hod.sendAttendanceReminder(req.user.id, parsed.data.subject_id, parsed.data.week_start));
+}));
+
+const timetableSchema = z.object({
+  faculty_id: z.string().uuid(),
+  classroom_id: z.string().uuid(),
+  day_of_week: z.coerce.number().int().min(1).max(7),
+  start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'start_time must be HH:MM'),
+  end_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'end_time must be HH:MM'),
+}).strict().refine((d) => d.end_time > d.start_time, {
+  message: 'end_time must be after start_time',
+  path: ['end_time'],
+});
+
+router.post('/subjects/:id/timetable', asyncHandler(async (req, res) => {
+  if (!uuid.safeParse(req.params.id).success) return bad(res, 'Invalid subject id');
+  const parsed = timetableSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const slot = await hod.scheduleSubjectTimetableSlot(req.user.id, req.params.id, parsed.data);
+  res.status(201).json({ success: true, timetable: slot });
+}));
+
 const examSchema = z.object({
   subject_id: z.string().uuid(),
   exam_type: z.string().trim().min(1).max(100),

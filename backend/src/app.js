@@ -25,12 +25,16 @@ app.use('/api/chat', require('./routes/chat'));
 app.use('/api/students', require('./routes/students'));
 app.use('/api/faculty', require('./routes/faculty'));
 app.use('/api/hod', require('./routes/hod'));
+app.use('/api/admissions', require('./routes/admissions'));
 app.use('/api/campus', require('./routes/campus'));
 app.use('/api/admin', require('./routes/admin'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  if (err && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message, ...(err.payload || {}) });
+  }
   console.error(err);            // details stay in the server log only
   res.status(500).json({ error: 'Something went wrong' });
 });

@@ -6,6 +6,8 @@ import { GraduationCap } from './components/Icons.jsx';
 
 const Admin = lazy(() => import('./pages/Admin.jsx'));
 const Hod = lazy(() => import('./pages/Hod.jsx'));
+const Teacher = lazy(() => import('./pages/Teacher.jsx'));
+const Applicant = lazy(() => import('./pages/Applicant.jsx'));
 const Campus = lazy(() => import('./pages/Campus.jsx'));
 
 const LoadingScreen = () => (
@@ -36,6 +38,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(!!getToken());
   const [view, setView] = useState('chat');
+  const [teacherTab, setTeacherTab] = useState('Grading');
+  const [applicantTab, setApplicantTab] = useState('Apply');
   const [mapInit, setMapInit] = useState(parseMapHash);
 
   useEffect(() => {
@@ -84,7 +88,18 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login onLoggedIn={setUser} onMap={() => openMap()} />;
+    return (
+      <Login
+        onLoggedIn={(u, opts = {}) => {
+          setUser(u);
+          if (opts.isNewApplicant && u.role === 'applicant') {
+            setApplicantTab('Apply');
+            setView('applicant');
+          }
+        }}
+        onMap={() => openMap()}
+      />
+    );
   }
 
   if (view === 'admin' && user.role === 'admin') {
@@ -103,12 +118,36 @@ export default function App() {
     );
   }
 
+  if (view === 'teacher' && user.role === 'teacher') {
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <Teacher initialTab={teacherTab} onBack={() => setView('chat')} />
+      </Suspense>
+    );
+  }
+
+  if (view === 'applicant' && user.role === 'applicant') {
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <Applicant user={user} initialTab={applicantTab} onBack={() => setView('chat')} />
+      </Suspense>
+    );
+  }
+
   return (
     <Chat
       user={user}
       onLogout={logout}
       onAdmin={() => setView('admin')}
       onHod={() => setView('hod')}
+      onTeacher={(tab = 'Grading') => {
+        setTeacherTab(tab);
+        setView('teacher');
+      }}
+      onApplicant={(tab = 'Apply') => {
+        setApplicantTab(tab);
+        setView('applicant');
+      }}
       onMap={openMap}
     />
   );

@@ -157,6 +157,163 @@ router.put('/admissions/:id', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------------------------------------------------------------- admission applications
+router.get('/admission-applications', asyncHandler(async (req, res) => {
+  const statusFilter = typeof req.query.status === 'string' && req.query.status !== 'all' ? req.query.status : null;
+  const search = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim()}%` : null;
+
+  const conditions = [];
+  const params = [];
+  if (statusFilter) {
+    params.push(statusFilter);
+    conditions.push(`app.status = $${params.length}`);
+  }
+  if (search) {
+    params.push(search);
+    conditions.push(
+      `(app.application_number ILIKE $${params.length} OR app.full_name ILIKE $${params.length} OR app.email ILIKE $${params.length} OR c.course_name ILIKE $${params.length})`
+    );
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const [listRes, countsRes] = await Promise.all([
+    db.query(
+      `SELECT app.id, app.application_number, app.applicant_user_id, app.course_id,
+              c.course_name, d.department_name,
+              app.full_name, app.email, app.phone,
+              to_char(app.date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+              app.gender, app.address, app.previous_qualification, app.previous_institution,
+              app.percentage_or_gpa::float8 AS percentage_or_gpa, app.passing_year,
+              app.guardian_name, app.guardian_phone, app.statement_of_purpose,
+              app.status, app.admin_remarks,
+              ru.full_name AS reviewed_by_name,
+              to_char(app.reviewed_at, 'YYYY-MM-DD HH24:MI') AS reviewed_at,
+              to_char(app.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+              ur.role_name AS applicant_user_role
+         FROM admission_applications app
+         JOIN courses c ON c.id = app.course_id
+         JOIN departments d ON d.id = c.department_id
+         LEFT JOIN users ru ON ru.id = app.reviewed_by
+         LEFT JOIN users au ON au.id = app.applicant_user_id
+         LEFT JOIN roles ur ON ur.id = au.role_id
+        ${whereClause}
+        ORDER BY
+          CASE app.status WHEN 'pending' THEN 0 WHEN 'under_review' THEN 1 WHEN 'approved' THEN 2 ELSE 3 END,
+          app.created_at DESC
+        LIMIT 200`,
+      params
+    ),
+    db.query(
+      `SELECT COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+              COUNT(*) FILTER (WHERE status = 'under_review')::int AS under_review,
+              COUNT(*) FILTER (WHERE status = 'approved')::int AS approved,
+              COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected
+         FROM admission_applications`
+    ),
+  ]);
+
+  res.json({
+    applications: listRes.rows,
+    counts: countsRes.rows[0] || { total: 0, pending: 0, under_review: 0, approved: 0, rejected: 0 },
+  });
+}));
+
+const reviewApplicationSchema = z.object({
+  status: z.enum(['pending', 'under_review', 'approved', 'rejected']),
+  admin_remarks: z.preprocess(emptyToNull, z.string().trim().max(1000).nullable().optional()),
+  enroll_student: z.boolean().optional().default(false),
+}).strict();
+
+router.patch('/admission-applications/:id', asyncHandler(async (req, res) => {
+  if (!validId(req, res)) return;
+  const parsed = reviewApplicationSchema.safeParse(req.body);
+  if (!parsed.success) return bad(res, parsed.error.issues[0].message);
+  const { status, admin_remarks, enroll_student } = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const appRes = await client.query(
+      `SELECT app.id, app.application_number, app.applicant_user_id, app.course_id,
+              c.course_name, c.department_id
+         FROM admission_applications app
+         JOIN courses c ON c.id = app.course_id
+        WHERE app.id = $1`,
+      [req.params.id]
+    );
+    const existing = appRes.rows[0];
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Admission application not found' });
+    }
+
+    const updatedRes = await client.query(
+      `UPDATE admission_applications
+          SET status = $2,
+              admin_remarks = $3,
+              reviewed_by = $4,
+              reviewed_at = now(),
+              applicant_seen_at = NULL,
+              updated_at = now()
+        WHERE id = $1
+       RETURNING id, application_number, status, admin_remarks,
+                 to_char(reviewed_at, 'YYYY-MM-DD HH24:MI') AS reviewed_at`,
+      [req.params.id, status, admin_remarks ?? null, req.user.id]
+    );
+
+    let enrolledStudent = null;
+    if (status === 'approved' && enroll_student && existing.applicant_user_id) {
+      const stuCheck = await client.query('SELECT id, student_number FROM students WHERE user_id = $1', [existing.applicant_user_id]);
+      if (!stuCheck.rowCount) {
+        await client.query(
+          "UPDATE users SET role_id = (SELECT id FROM roles WHERE role_name = 'student'), updated_at = now() WHERE id = $1",
+          [existing.applicant_user_id]
+        );
+        const year = new Date().getFullYear();
+        const studentNo = `${existing.course_name.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}${year}${String(Math.floor(100 + Math.random() * 900))}`;
+        const insStu = await client.query(
+          `INSERT INTO students (user_id, student_number, department_id, course_id, semester)
+           VALUES ($1, $2, $3, $4, 1)
+           RETURNING id, student_number`,
+          [existing.applicant_user_id, studentNo, existing.department_id, existing.course_id]
+        );
+        enrolledStudent = insStu.rows[0];
+
+        // Enroll in available semester 1 (or lowest semester) subjects for the course
+        await client.query(
+          `INSERT INTO student_enrollments (student_id, subject_id, academic_year)
+           SELECT $1, sub.id, $2
+             FROM subjects sub
+            WHERE sub.course_id = $3
+              AND sub.semester = COALESCE((SELECT MIN(semester) FROM subjects WHERE course_id = $3), 1)
+           ON CONFLICT (student_id, subject_id, academic_year) DO NOTHING`,
+          [enrolledStudent.id, `${year}-${String((year + 1) % 100).padStart(2, '0')}`, existing.course_id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    await audit(req.user.id, 'admin_admission_application_review', 'admission_application', req.params.id, {
+      application_number: existing.application_number,
+      status,
+      enroll_student: Boolean(enrolledStudent),
+    });
+
+    res.json({
+      success: true,
+      application: updatedRes.rows[0],
+      enrolled_student: enrolledStudent,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
 // ---------------------------------------------------------------- notices
 const noticeSchema = z.object({
   title: z.string().trim().min(1).max(200),

@@ -42,6 +42,7 @@ const CATEGORIES = [
       { id: 'Faqs', label: 'Knowledge FAQs', icon: HelpCircle },
       { id: 'Documents', label: 'Documents & RAG', icon: FileText },
       { id: 'Admissions', label: 'Admissions Info', icon: BookOpen },
+      { id: 'Applications', label: 'Admission Applications', icon: UserCheck },
       { id: 'Notices', label: 'Notices & Bulletin', icon: Bell },
     ],
   },
@@ -1700,6 +1701,343 @@ function AdmissionsTab() {
   );
 }
 
+// ------------------------------------------------------------------ Admission Applications Tab
+const APP_STATUS_STYLE = {
+  pending: 'bg-amber-50 text-amber-800 border-amber-200',
+  under_review: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  rejected: 'bg-rose-50 text-rose-700 border-rose-200',
+};
+
+const APP_STATUS_LABEL = {
+  pending: 'Pending',
+  under_review: 'Under Review',
+  approved: 'Approved',
+  rejected: 'Rejected',
+};
+
+function AdmissionApplicationsTab({ onUpdated }) {
+  const [applications, setApplications] = useState([]);
+  const [counts, setCounts] = useState({ total: 0, pending: 0, under_review: 0, approved: 0, rejected: 0 });
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  // Review modal state
+  const [reviewing, setReviewing] = useState(null);
+  const [reviewStatus, setReviewStatus] = useState('under_review');
+  const [reviewRemarks, setReviewRemarks] = useState('');
+  const [enrollStudent, setEnrollStudent] = useState(false);
+  const [savingReview, setSavingReview] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = {};
+      if (statusFilter !== 'all') params.status = statusFilter;
+      if (search.trim()) params.q = search.trim();
+      const res = await api.adminAdmissionApplications(params);
+      setApplications(res.applications || []);
+      setCounts(res.counts || { total: 0, pending: 0, under_review: 0, approved: 0, rejected: 0 });
+    } catch (e) {
+      setError(e.message || 'Failed to load admission applications');
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter, search]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openReview = (app) => {
+    setReviewing(app);
+    setReviewStatus(app.status === 'pending' ? 'under_review' : app.status);
+    setReviewRemarks(app.admin_remarks || '');
+    setEnrollStudent(false);
+    setError('');
+  };
+
+  const handleQuickStatus = async (app, nextStatus) => {
+    setError('');
+    setInfo('');
+    try {
+      await api.reviewAdmissionApplication(app.id, {
+        status: nextStatus,
+        admin_remarks: app.admin_remarks || null,
+        enroll_student: false,
+      });
+      setInfo(`Application ${app.application_number} marked as ${APP_STATUS_LABEL[nextStatus]}.`);
+      await load();
+      onUpdated?.();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleSaveReview = async (e) => {
+    e.preventDefault();
+    if (!reviewing) return;
+    setSavingReview(true);
+    setError('');
+    setInfo('');
+    try {
+      const res = await api.reviewAdmissionApplication(reviewing.id, {
+        status: reviewStatus,
+        admin_remarks: reviewRemarks,
+        enroll_student: reviewStatus === 'approved' && enrollStudent,
+      });
+      const enrolledNote = res.enrolled_student
+        ? ` Applicant promoted to Student (${res.enrolled_student.student_number}).`
+        : '';
+      setInfo(`Updated ${reviewing.application_number} to ${APP_STATUS_LABEL[reviewStatus]}.${enrolledNote}`);
+      setReviewing(null);
+      await load();
+      onUpdated?.();
+    } catch (err) {
+      setError(err.message || 'Failed to save review');
+    } finally {
+      setSavingReview(false);
+    }
+  };
+
+  const filterPills = [
+    { id: 'all', label: 'All', count: counts.total },
+    { id: 'pending', label: 'Pending', count: counts.pending },
+    { id: 'under_review', label: 'Under Review', count: counts.under_review },
+    { id: 'approved', label: 'Approved', count: counts.approved },
+    { id: 'rejected', label: 'Rejected', count: counts.rejected },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <Alert kind="error" onClose={() => setError('')}>{error}</Alert>
+      <Alert kind="ok" onClose={() => setInfo('')}>{info}</Alert>
+
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-slate-900">Submitted Admission Applications</h2>
+          <p className="text-xs text-slate-500">
+            Review applications submitted from the Admission Form, update status, and optionally enroll approved applicants as students.
+          </p>
+        </div>
+        <button type="button" onClick={load} disabled={loading} className={btnSecondary}>
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      {/* Filter Pills & Search */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {filterPills.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setStatusFilter(p.id)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                statusFilter === p.id
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <span>{p.label}</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  statusFilter === p.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {p.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="search"
+          placeholder="Search app #, name, email, course..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full sm:w-64 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+        />
+      </div>
+
+      {/* Applications Table */}
+      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-2xs overflow-x-auto">
+        {applications.length === 0 ? (
+          <div className="p-8 text-center text-xs text-slate-500">
+            {loading ? 'Loading admission applications...' : 'No admission applications match the current filter.'}
+          </div>
+        ) : (
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+              <tr>
+                <th className="p-3">Application #</th>
+                <th className="p-3">Applicant</th>
+                <th className="p-3">Course &amp; Dept</th>
+                <th className="p-3">Qualification &amp; Score</th>
+                <th className="p-3">Submitted</th>
+                <th className="p-3 text-center">Status</th>
+                <th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {applications.map((app) => (
+                <tr key={app.id} className="hover:bg-slate-50/50">
+                  <td className="p-3 font-mono font-bold text-indigo-700 whitespace-nowrap">{app.application_number}</td>
+                  <td className="p-3">
+                    <div className="font-semibold text-slate-900">{app.full_name}</div>
+                    <div className="text-[11px] text-slate-500">{app.email} &middot; {app.phone}</div>
+                  </td>
+                  <td className="p-3">
+                    <div className="font-semibold text-slate-800">{app.course_name}</div>
+                    <div className="text-[11px] text-slate-400">{app.department_name}</div>
+                  </td>
+                  <td className="p-3">
+                    <div className="font-medium text-slate-800">{app.previous_qualification}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {app.percentage_or_gpa}% &middot; {app.previous_institution} ({app.passing_year})
+                    </div>
+                  </td>
+                  <td className="p-3 text-slate-500 whitespace-nowrap">{app.created_at}</td>
+                  <td className="p-3 text-center whitespace-nowrap">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${APP_STATUS_STYLE[app.status] || ''}`}>
+                      {APP_STATUS_LABEL[app.status] || app.status}
+                    </span>
+                    {app.applicant_user_role === 'student' && (
+                      <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">Enrolled Student</div>
+                    )}
+                  </td>
+                  <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => openReview(app)}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold cursor-pointer"
+                    >
+                      Review
+                    </button>
+                    {app.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => handleQuickStatus(app, 'approved')}
+                        className="px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-semibold cursor-pointer"
+                      >
+                        Approve
+                      </button>
+                    )}
+                    {(app.status === 'pending' || app.status === 'under_review') && (
+                      <button
+                        type="button"
+                        onClick={() => handleQuickStatus(app, 'rejected')}
+                        className="px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-semibold cursor-pointer"
+                      >
+                        Reject
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Review Modal */}
+      {reviewing && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <form onSubmit={handleSaveReview} className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <div className="text-[11px] font-mono font-bold text-indigo-600">{reviewing.application_number}</div>
+                <h3 className="font-bold text-sm text-slate-900">
+                  Review Application &mdash; {reviewing.full_name} ({reviewing.course_name})
+                </h3>
+              </div>
+              <button type="button" onClick={() => setReviewing(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs bg-slate-50 rounded-xl p-3.5 border border-slate-200/70">
+              <div><strong className="text-slate-600">Email:</strong> {reviewing.email}</div>
+              <div><strong className="text-slate-600">Phone:</strong> {reviewing.phone}</div>
+              <div><strong className="text-slate-600">DOB:</strong> {reviewing.date_of_birth}</div>
+              <div><strong className="text-slate-600">Gender:</strong> {reviewing.gender || '—'}</div>
+              <div className="sm:col-span-2"><strong className="text-slate-600">Address:</strong> {reviewing.address}</div>
+              <div><strong className="text-slate-600">Qualification:</strong> {reviewing.previous_qualification}</div>
+              <div><strong className="text-slate-600">Score:</strong> {reviewing.percentage_or_gpa}% ({reviewing.passing_year})</div>
+              <div className="sm:col-span-2"><strong className="text-slate-600">Institution:</strong> {reviewing.previous_institution}</div>
+              {reviewing.guardian_name && (
+                <div className="sm:col-span-2">
+                  <strong className="text-slate-600">Guardian:</strong> {reviewing.guardian_name}{' '}
+                  {reviewing.guardian_phone ? `(${reviewing.guardian_phone})` : ''}
+                </div>
+              )}
+              {reviewing.statement_of_purpose && (
+                <div className="sm:col-span-2 pt-1 border-t border-slate-200">
+                  <strong className="text-slate-600 block mb-0.5">Statement of Purpose:</strong>
+                  <p className="text-slate-700 leading-relaxed">{reviewing.statement_of_purpose}</p>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">Decision Status</label>
+              <select
+                className={fieldStyle}
+                value={reviewStatus}
+                onChange={(e) => setReviewStatus(e.target.value)}
+              >
+                <option value="pending">Pending</option>
+                <option value="under_review">Under Review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">Administration Remarks (visible to applicant)</label>
+              <textarea
+                rows={3}
+                className={fieldStyle}
+                value={reviewRemarks}
+                onChange={(e) => setReviewRemarks(e.target.value)}
+                placeholder="e.g. Verified marksheets. Please complete fee payment by Friday."
+              />
+            </div>
+
+            {reviewStatus === 'approved' && reviewing.applicant_user_id && reviewing.applicant_user_role === 'applicant' && (
+              <label className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-950 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enrollStudent}
+                  onChange={(e) => setEnrollStudent(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>
+                  <strong>Enroll as Student immediately:</strong> promote account to Student role and enroll in {reviewing.course_name} Semester 1 subjects.
+                </span>
+              </label>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button type="button" onClick={() => setReviewing(null)} className={btnSecondary}>
+                Cancel
+              </button>
+              <button type="submit" disabled={savingReview} className={btnPrimary}>
+                {savingReview ? 'Saving Decision...' : 'Save Application Decision'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ Notices Tab
 function NoticesTab() {
   const [list, setList] = useState([]);
@@ -2053,6 +2391,18 @@ function AnalyticsTab() {
 // ------------------------------------------------------------------ Root Admin Page
 export default function Admin({ onBack }) {
   const [tab, setTab] = useState('Users');
+  const [pendingAppsCount, setPendingAppsCount] = useState(0);
+
+  const refreshPendingAppsCount = useCallback(() => {
+    api
+      .adminAdmissionApplications({ status: 'pending' })
+      .then((r) => setPendingAppsCount(r.counts?.pending || 0))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshPendingAppsCount();
+  }, [refreshPendingAppsCount]);
 
   return (
     <div className="h-full flex flex-col bg-slate-50 overflow-hidden text-slate-800">
@@ -2110,6 +2460,11 @@ export default function Admin({ onBack }) {
                       <Icon className={`w-4 h-4 ${active ? 'text-indigo-600' : 'text-slate-400'}`} />
                       <span>{t.label}</span>
                     </div>
+                    {t.id === 'Applications' && pendingAppsCount > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-none">
+                        {pendingAppsCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -2143,6 +2498,7 @@ export default function Admin({ onBack }) {
             {tab === 'Faqs' && <FaqsTab />}
             {tab === 'Documents' && <DocumentsTab />}
             {tab === 'Admissions' && <AdmissionsTab />}
+            {tab === 'Applications' && <AdmissionApplicationsTab onUpdated={refreshPendingAppsCount} />}
             {tab === 'Notices' && <NoticesTab />}
             {tab === 'Campus' && <CampusTab />}
             {tab === 'Analytics' && <AnalyticsTab />}

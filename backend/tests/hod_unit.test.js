@@ -283,3 +283,212 @@ test('scheduleExamination inserts examination scoped to department subject', asy
   }
 });
 
+test('assignExamGradingFaculty validates department scope for both exam and faculty', async () => {
+  const originalQuery = db.query;
+  try {
+    db.query = async (sql, params) => {
+      const s = String(sql);
+      if (s.includes('FROM departments WHERE hod_user_id')) {
+        return { rows: [{ id: 'dept-cs', department_name: 'Computer Science', hod_user_id: params[0] }] };
+      }
+      if (s.includes('FROM examinations e') && s.includes('WHERE e.id = $1 AND c.department_id = $2')) {
+        return { rows: [{ id: params[0], exam_type: 'Unit Test 1', subject_code: 'BCA203', subject_name: 'Discrete Mathematics' }] };
+      }
+      if (s.includes('FROM faculty f') && s.includes('WHERE f.id = $1 AND f.department_id = $2')) {
+        return params[0] === 'fac-cs'
+          ? { rows: [{ id: 'fac-cs', full_name: 'Prof. Rahul Verma', employee_number: 'EMP001' }] }
+          : { rows: [] };
+      }
+      if (s.includes('UPDATE examinations')) {
+        return {
+          rows: [{
+            id: params[2],
+            exam_type: 'Unit Test 1',
+            exam_date: '2026-11-22',
+            grading_faculty_id: params[0],
+            grading_assigned_at: '2026-11-27',
+          }],
+        };
+      }
+      return { rows: [] };
+    };
+
+    const assigned = await hod.assignExamGradingFaculty('hod-cs', 'exam-1', 'fac-cs');
+    assert.strictEqual(assigned.grading_faculty_id, 'fac-cs');
+    assert.strictEqual(assigned.grading_faculty_name, 'Prof. Rahul Verma');
+
+    await assert.rejects(
+      () => hod.assignExamGradingFaculty('hod-cs', 'exam-1', 'fac-other-dept'),
+      /does not belong to your department/
+    );
+  } finally {
+    db.query = originalQuery;
+  }
+});
+
+test('faculty.submitExamMarks rejects unassigned teacher and non-enrolled students', async () => {
+  const facultyService = require('../src/services/faculty');
+  const originalQuery = db.query;
+  try {
+    db.query = async (sql, params) => {
+      const s = String(sql);
+      if (s.includes('FROM faculty f') && s.includes('WHERE f.user_id = $1')) {
+        return { rows: [{ id: 'fac-1', employee_number: 'EMP001', department_id: 'dept-cs', department_name: 'Computer Science', full_name: 'Prof. Rahul Verma', email: 'teacher@uni.test' }] };
+      }
+      if (s.includes('FROM examinations e') && s.includes('WHERE e.id = $1')) {
+        return {
+          rows: [{
+            id: params[0],
+            subject_id: 'subj-1',
+            grading_faculty_id: params[0] === 'exam-other' ? 'fac-2' : 'fac-1',
+            exam_type: 'Unit Test 1',
+            subject_code: 'BCA203',
+          }],
+        };
+      }
+      if (s.includes('FROM student_enrollments WHERE subject_id = $1')) {
+        return { rows: [{ student_id: 'stu-enrolled' }] };
+      }
+      return { rows: [] };
+    };
+
+    await assert.rejects(
+      () => facultyService.submitExamMarks('u-teacher-1', 'exam-other', [{ student_id: 'stu-enrolled', marks_obtained: 80 }]),
+      /not assigned to grade/
+    );
+
+    await assert.rejects(
+      () => facultyService.submitExamMarks('u-teacher-1', 'exam-mine', [{ student_id: 'stu-outsider', marks_obtained: 80 }]),
+      /not enrolled in this subject/
+    );
+  } finally {
+    db.query = originalQuery;
+  }
+});
+
+test('spreadsheet parser reads UTF-8 BOM CSV, quoted cells, and XLSX buffers', () => {
+  const zlib = require('zlib');
+  const { parseCsvText, parseMarksSpreadsheet } = require('../src/services/spreadsheet');
+
+  const csvRows = parseCsvText('\uFEFFstudent_number,full_name,marks_obtained\r\nBCA401001,"Patel, Riya",88.5\r\nBCA401002,Aman Singh,72\r\n');
+  assert.deepStrictEqual(csvRows, [
+    ['student_number', 'full_name', 'marks_obtained'],
+    ['BCA401001', 'Patel, Riya', '88.5'],
+    ['BCA401002', 'Aman Singh', '72'],
+  ]);
+
+  // Build minimal valid .xlsx ZIP in memory with sharedStrings + sheet1
+  function makeZip(files) {
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+    for (const { name, content } of files) {
+      const nameBuf = Buffer.from(name, 'utf8');
+      const rawBuf = Buffer.from(content, 'utf8');
+      const compBuf = zlib.deflateRawSync(rawBuf);
+
+      const local = Buffer.alloc(30 + nameBuf.length);
+      local.writeUInt32LE(0x04034b50, 0);
+      local.writeUInt16LE(20, 4);
+      local.writeUInt16LE(8, 8);
+      local.writeUInt32LE(compBuf.length, 18);
+      local.writeUInt32LE(rawBuf.length, 22);
+      local.writeUInt16LE(nameBuf.length, 26);
+      nameBuf.copy(local, 30);
+      localParts.push(local, compBuf);
+
+      const central = Buffer.alloc(46 + nameBuf.length);
+      central.writeUInt32LE(0x02014b50, 0);
+      central.writeUInt16LE(20, 4);
+      central.writeUInt16LE(20, 6);
+      central.writeUInt16LE(8, 10);
+      central.writeUInt32LE(compBuf.length, 20);
+      central.writeUInt32LE(rawBuf.length, 24);
+      central.writeUInt16LE(nameBuf.length, 28);
+      central.writeUInt32LE(offset, 42);
+      nameBuf.copy(central, 46);
+      centralParts.push(central);
+
+      offset += local.length + compBuf.length;
+    }
+    const cdBuf = Buffer.concat(centralParts);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(files.length, 8);
+    eocd.writeUInt16LE(files.length, 10);
+    eocd.writeUInt32LE(cdBuf.length, 12);
+    eocd.writeUInt32LE(offset, 16);
+    return Buffer.concat([...localParts, cdBuf, eocd]);
+  }
+
+  const xlsxBuf = makeZip([
+    {
+      name: 'xl/sharedStrings.xml',
+      content: '<sst><si><t>student_number</t></si><si><t>marks_obtained</t></si><si><t>BCA2023001</t></si></sst>',
+    },
+    {
+      name: 'xl/worksheets/sheet1.xml',
+      content:
+        '<worksheet><sheetData>' +
+        '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+        '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>91</v></c></row>' +
+        '</sheetData></worksheet>',
+    },
+  ]);
+
+  const parsedXlsx = parseMarksSpreadsheet({ originalname: 'marks.xlsx', buffer: xlsxBuf, mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  assert.strictEqual(parsedXlsx.format, 'xlsx');
+  assert.deepStrictEqual(parsedXlsx.rows, [
+    ['student_number', 'marks_obtained'],
+    ['BCA2023001', '91'],
+  ]);
+});
+
+test('time helpers compute Monday week start and weekly timetable dates', () => {
+  const { getWeekStart, addDays, getWeekDatesForDays } = require('../src/services/time');
+  assert.strictEqual(getWeekStart('2026-11-27'), '2026-11-23');
+  assert.strictEqual(getWeekStart('2026-11-23'), '2026-11-23');
+  assert.strictEqual(getWeekStart('2026-11-29'), '2026-11-23');
+  assert.strictEqual(addDays('2026-11-23', 6), '2026-11-29');
+  assert.deepStrictEqual(
+    getWeekDatesForDays('2026-11-23', [3, 4]).map((d) => `${d.date}:${d.short_day}`),
+    ['2026-11-25:Wed', '2026-11-26:Thu']
+  );
+});
+
+test('uploadWeeklyAttendanceFromFile rejects blank cells and non-P/A codes with needs_reupload', async () => {
+  const facultyService = require('../src/services/faculty');
+  const originalQuery = db.query;
+  try {
+    db.query = async (sql) => {
+      const s = String(sql);
+      if (s.includes('FROM faculty f') && s.includes('WHERE f.user_id = $1')) {
+        return { rows: [{ id: 'fac-1', employee_number: 'EMP001', department_id: 'dept-cs', department_name: 'Computer Science', full_name: 'Prof. Rahul Verma', email: 'teacher@uni.test' }] };
+      }
+      if (s.includes('FROM subjects sub') && s.includes('is_assigned')) {
+        return { rows: [{ id: 'subj-402', subject_code: 'BCA402', subject_name: 'Python Programming', semester: 4, course_name: 'BCA', is_assigned: true }] };
+      }
+      if (s.includes('FROM timetables')) {
+        return { rows: [{ day_of_week: 3 }, { day_of_week: 4 }] };
+      }
+      if (s.includes('FROM student_enrollments en')) {
+        return { rows: [{ student_id: 's1', student_number: 'BCA2023001', full_name: 'Riya Patel', email: 'student1@uni.test' }] };
+      }
+      return { rows: [] };
+    };
+
+    const csvInvalid = 'student_number,full_name,2026-11-25 (Wed),2026-11-26 (Thu)\nBCA2023001,Riya Patel,X,\n';
+    await assert.rejects(
+      () =>
+        facultyService.uploadWeeklyAttendanceFromFile('u-teacher-1', 'subj-402', '2026-11-23', {
+          originalname: 'att.csv',
+          mimetype: 'text/csv',
+          buffer: Buffer.from(csvInvalid, 'utf8'),
+        }),
+      (err) => err.status === 400 && err.payload?.needs_reupload === true && err.payload.missing_entries.length === 1 && err.payload.invalid_entries.length === 1
+    );
+  } finally {
+    db.query = originalQuery;
+  }
+});
+

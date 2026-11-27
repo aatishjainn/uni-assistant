@@ -15,6 +15,7 @@ const DEMO_PERSONAS = [
   { name: 'Aman Singh', role: 'Student', email: 'student2@uni.test', desc: 'BCA · Semester 4' },
   { name: 'Prof. Rahul Verma', role: 'Teacher', email: 'teacher@uni.test', desc: 'Computer Science Faculty' },
   { name: 'Dr. Meera Sharma', role: 'HOD', email: 'hod@uni.test', desc: 'Head of Computer Science' },
+  { name: 'Maya Chen', role: 'Applicant', email: 'applicant@uni.test', desc: 'Prospective Student · Apply' },
   { name: 'System Admin', role: 'Admin', email: 'admin@uni.test', desc: 'Full System Control' },
 ];
 
@@ -36,7 +37,7 @@ export default function Login({ onLoggedIn, onMap }) {
       }
       const r = await api.login(email, password);
       setToken(r.token);
-      onLoggedIn(r.user);
+      onLoggedIn(r.user, { isNewApplicant: mode === 'register' });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -55,6 +56,7 @@ export default function Login({ onLoggedIn, onMap }) {
     Student: 'bg-blue-50 text-blue-700 border-blue-200',
     Teacher: 'bg-emerald-50 text-emerald-700 border-emerald-200',
     HOD: 'bg-purple-50 text-purple-700 border-purple-200',
+    Applicant: 'bg-amber-50 text-amber-800 border-amber-200',
     Admin: 'bg-rose-50 text-rose-700 border-rose-200',
   };
 

@@ -362,3 +362,514 @@ test('Admin FAQ management: list, create, update, and delete', async () => {
   const deleted = await api('admin@uni.test', 'DELETE', `/api/admin/faqs/${faqId}`);
   assert.strictEqual(deleted.status, 204);
 });
+
+// ----------------------------------------------------------------
+// 9. HOD Exam Grading Assignment -> Teacher Grading Flow
+// ----------------------------------------------------------------
+test('HOD assigns exam grading task to department faculty and assigned teacher grades students', async () => {
+  // Find CS subject BCA401 and CS teachers
+  const coursesRes = await api('hod@uni.test', 'GET', '/api/hod/courses');
+  assert.strictEqual(coursesRes.status, 200);
+  const bca401 = coursesRes.json.subjects.find((s) => s.subject_code === 'BCA401');
+  assert(bca401, 'BCA401 subject must exist');
+
+  const csFacultyRes = await api('hod@uni.test', 'GET', '/api/hod/faculty');
+  const profRahul = csFacultyRes.json.faculty.find((f) => f.email === 'teacher@uni.test');
+  assert(profRahul, 'Prof. Rahul Verma must exist in CS faculty');
+
+  const mgFacultyRes = await api('hod2@uni.test', 'GET', '/api/hod/faculty');
+  const profPooja = mgFacultyRes.json.faculty.find((f) => f.email === 'teacher4@uni.test');
+  assert(profPooja, 'Prof. Pooja Jain must exist in Management faculty');
+
+  // Create a synthetic past exam (so we don't mutate seeded pending exams)
+  const createdExam = await api('hod@uni.test', 'POST', '/api/hod/examinations', {
+    subject_id: bca401.id,
+    exam_type: 'Unit Test 1',
+    exam_date: '2026-11-20',
+    start_time: '09:00',
+    end_time: '10:30',
+    classroom_id: null,
+  });
+  assert.strictEqual(createdExam.status, 201);
+  const examId = createdExam.json.examination.id;
+
+  try {
+    // 1. Exam appears in HOD pending marks_not_entered
+    const pendingBefore = await api('hod@uni.test', 'GET', '/api/hod/pending');
+    assert.strictEqual(pendingBefore.status, 200);
+    assert(pendingBefore.json.marks_not_entered.some((m) => m.id === examId), 'Synthetic exam must appear in pending marks_not_entered');
+
+    // 2. SECURITY: CS HOD cannot assign grading to Management faculty
+    const crossDeptAssign = await api('hod@uni.test', 'PATCH', `/api/hod/examinations/${examId}/grading-assignee`, {
+      faculty_id: profPooja.id,
+    });
+    assert.strictEqual(crossDeptAssign.status, 400);
+
+    // 3. SECURITY: Non-HOD teacher cannot assign grading tasks
+    const teacherAssign = await api('teacher@uni.test', 'PATCH', `/api/hod/examinations/${examId}/grading-assignee`, {
+      faculty_id: profRahul.id,
+    });
+    assert.strictEqual(teacherAssign.status, 403);
+
+    // 4. HOD assigns grading task to Prof. Rahul Verma (teacher@uni.test)
+    const assigned = await api('hod@uni.test', 'PATCH', `/api/hod/examinations/${examId}/grading-assignee`, {
+      faculty_id: profRahul.id,
+    });
+    assert.strictEqual(assigned.status, 200);
+    assert.strictEqual(assigned.json.examination.grading_faculty_id, profRahul.id);
+    assert.strictEqual(assigned.json.examination.grading_faculty_name, 'Prof. Rahul Verma');
+
+    // 5. Teacher2 (not assigned to this exam) cannot view or grade it
+    const deniedStudents = await api('teacher2@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/students`);
+    assert.strictEqual(deniedStudents.status, 403);
+
+    // 6. Assigned teacher sees the exam in their grading tasks
+    const tasks = await api('teacher@uni.test', 'GET', '/api/faculty/me/grading-tasks');
+    assert.strictEqual(tasks.status, 200);
+    const task = tasks.json.exams.find((e) => e.id === examId);
+    assert(task, 'Assigned teacher must see the exam in grading tasks');
+    assert.strictEqual(task.is_completed, false);
+
+    // 7. Assigned teacher fetches enrolled students
+    const studentsRes = await api('teacher@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/students`);
+    assert.strictEqual(studentsRes.status, 200);
+    assert(studentsRes.json.students.length > 0);
+
+    // 8. Validation rejects out-of-range marks (> 100)
+    const badMarks = await api('teacher@uni.test', 'PUT', `/api/faculty/me/grading-tasks/${examId}/marks`, {
+      marks: [{ student_id: studentsRes.json.students[0].student_id, marks_obtained: 150 }],
+    });
+    assert.strictEqual(badMarks.status, 400);
+
+    // 9. Assigned teacher grades all enrolled students
+    const marksPayload = studentsRes.json.students.map((st, idx) => ({
+      student_id: st.student_id,
+      marks_obtained: 60 + idx,
+    }));
+    const saved = await api('teacher@uni.test', 'PUT', `/api/faculty/me/grading-tasks/${examId}/marks`, {
+      marks: marksPayload,
+    });
+    assert.strictEqual(saved.status, 200);
+    assert.strictEqual(saved.json.marks_entered, studentsRes.json.students.length);
+
+    // 10. Task is now completed for teacher and removed from HOD pending marks_not_entered
+    const tasksAfter = await api('teacher@uni.test', 'GET', '/api/faculty/me/grading-tasks');
+    const completedTask = tasksAfter.json.exams.find((e) => e.id === examId);
+    assert.strictEqual(completedTask.is_completed, true);
+
+    const pendingAfter = await api('hod@uni.test', 'GET', '/api/hod/pending');
+    assert(!pendingAfter.json.marks_not_entered.some((m) => m.id === examId), 'Fully graded exam must clear from HOD pending marks_not_entered');
+
+    // 11. HOD can assign a subject to department faculty (and cross-dept faculty is rejected)
+    const crossSubjAssign = await api('hod@uni.test', 'POST', `/api/hod/subjects/${bca401.id}/assign-faculty`, {
+      faculty_id: profPooja.id,
+    });
+    assert.strictEqual(crossSubjAssign.status, 400);
+
+    const sameSubjAssign = await api('hod@uni.test', 'POST', `/api/hod/subjects/${bca401.id}/assign-faculty`, {
+      faculty_id: profRahul.id,
+      academic_year: '2026-27',
+    });
+    assert.strictEqual(sameSubjAssign.status, 200);
+    assert.strictEqual(sameSubjAssign.json.success, true);
+  } finally {
+    await db.query('DELETE FROM student_marks WHERE examination_id = $1', [examId]);
+    await db.query('DELETE FROM examinations WHERE id = $1', [examId]);
+  }
+});
+
+// ----------------------------------------------------------------
+// 10. Teacher Marks Upload via CSV (and missing marks re-upload prompt)
+// ----------------------------------------------------------------
+test('Teacher uploads CSV of marks; missing marks prompt re-upload without saving, complete CSV saves all marks', async () => {
+  const coursesRes = await api('hod@uni.test', 'GET', '/api/hod/courses');
+  const bca401 = coursesRes.json.subjects.find((s) => s.subject_code === 'BCA401');
+  const csFacultyRes = await api('hod@uni.test', 'GET', '/api/hod/faculty');
+  const profRahul = csFacultyRes.json.faculty.find((f) => f.email === 'teacher@uni.test');
+
+  const createdExam = await api('hod@uni.test', 'POST', '/api/hod/examinations', {
+    subject_id: bca401.id,
+    exam_type: 'Unit Test 2',
+    exam_date: '2026-11-21',
+    start_time: '11:00',
+    end_time: '12:00',
+    classroom_id: null,
+  });
+  assert.strictEqual(createdExam.status, 201);
+  const examId = createdExam.json.examination.id;
+
+  async function uploadCsv(email, filename, csvContent) {
+    const form = new FormData();
+    form.append('file', new Blob([csvContent], { type: 'text/csv' }), filename);
+    const r = await fetch(`${BASE}/api/faculty/me/grading-tasks/${examId}/upload-marks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${await login(email)}` },
+      body: form,
+    });
+    return { status: r.status, json: await r.json() };
+  }
+
+  try {
+    await api('hod@uni.test', 'PATCH', `/api/hod/examinations/${examId}/grading-assignee`, {
+      faculty_id: profRahul.id,
+    });
+
+    const studentsRes = await api('teacher@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/students`);
+    const enrolled = studentsRes.json.students;
+    assert(enrolled.length >= 2);
+
+    // 0. Download blank CSV template beforehand (and verify unassigned teacher gets 403)
+    const deniedTemplate = await api('teacher2@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/template`);
+    assert.strictEqual(deniedTemplate.status, 403);
+
+    const templateRes = await api('teacher@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/template`);
+    assert.strictEqual(templateRes.status, 200);
+    assert(typeof templateRes.json === 'string');
+    const templateLines = templateRes.json.trim().split(/\r?\n/);
+    assert.strictEqual(templateLines[0], 'student_number,full_name,marks_obtained');
+    assert.strictEqual(templateLines.length, enrolled.length + 1);
+    assert(templateLines[1].endsWith(','), 'Blank template must leave marks_obtained empty');
+
+    // 1. Incomplete CSV (one blank mark, one omitted student) -> 400 with needs_reupload: true
+    const partialRows = enrolled.slice(0, enrolled.length - 1).map((st, idx) =>
+      `${st.student_number},"${st.full_name}",${idx === 0 ? '' : 75}`
+    );
+    const incompleteCsv = ['student_number,full_name,marks_obtained', ...partialRows].join('\n');
+    const badRes = await uploadCsv('teacher@uni.test', 'partial_marks.csv', incompleteCsv);
+    assert.strictEqual(badRes.status, 400);
+    assert.strictEqual(badRes.json.needs_reupload, true);
+    assert(badRes.json.error.includes('upload a new CSV'), 'Error message must tell teacher to upload a new CSV');
+    assert.strictEqual(badRes.json.missing_students.length, 2, 'Must report both blank-mark student and omitted student');
+
+    // Verify nothing was saved on failed upload
+    const checkAfterBad = await api('teacher@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/students`);
+    assert(checkAfterBad.json.students.every((s) => s.marks_obtained === null), 'Partial upload must not save incomplete marks');
+
+    // 2. Complete CSV with all students' marks -> 200 and clears pending item
+    const fullRows = enrolled.map((st, idx) => `${st.student_number},"${st.full_name}",${70 + idx}`);
+    const fullCsv = ['\uFEFFstudent_number,full_name,marks_obtained', ...fullRows].join('\r\n');
+    const okRes = await uploadCsv('teacher@uni.test', 'complete_marks.csv', fullCsv);
+    assert.strictEqual(okRes.status, 200);
+    assert.strictEqual(okRes.json.success, true);
+    assert.strictEqual(okRes.json.marks_entered, enrolled.length);
+
+    const checkAfterOk = await api('teacher@uni.test', 'GET', `/api/faculty/me/grading-tasks/${examId}/students`);
+    assert.strictEqual(checkAfterOk.json.students[0].marks_obtained, 70);
+  } finally {
+    await db.query('DELETE FROM student_marks WHERE examination_id = $1', [examId]);
+    await db.query('DELETE FROM examinations WHERE id = $1', [examId]);
+  }
+});
+
+// ----------------------------------------------------------------
+// 11. Weekly Attendance Sheets: HOD Missing Alert & Teacher Blank CSV / P-A Upload
+// ----------------------------------------------------------------
+test('HOD pending detects Rahul Verma missing attendance for a class and teacher downloads/uploads weekly P/A CSV', async () => {
+  // Temporarily clear current week submission for BCA402 if already uploaded by user, and restore in finally
+  const { getCurrentWeekStart } = require('../src/services/time');
+  const config = require('../src/config');
+  const curWeek = getCurrentWeekStart(config.tz);
+  const bca402Row = (await db.query("SELECT id FROM subjects WHERE subject_code = 'BCA402'")).rows[0];
+  const prevSub = (await db.query('SELECT * FROM weekly_attendance_submissions WHERE subject_id = $1 AND week_start = $2::date', [bca402Row.id, curWeek])).rows[0] || null;
+  const prevAtt = (await db.query("SELECT student_id, to_char(class_date,'YYYY-MM-DD') AS class_date, status FROM attendance WHERE subject_id = $1 AND class_date BETWEEN $2::date AND ($2::date + 6)", [bca402Row.id, curWeek])).rows;
+
+  await db.query('DELETE FROM weekly_attendance_submissions WHERE subject_id = $1 AND week_start = $2::date', [bca402Row.id, curWeek]);
+  await db.query('DELETE FROM attendance WHERE subject_id = $1 AND class_date BETWEEN $2::date AND ($2::date + 6)', [bca402Row.id, curWeek]);
+
+  const testWeek = '2026-12-07';
+  const nextWeek = '2026-12-14';
+  const bca402Id = bca402Row.id;
+
+  try {
+    // 1. HOD pending flags Prof. Rahul Verma missing attendance for BCA402
+    const pending = await api('hod@uni.test', 'GET', '/api/hod/pending');
+    assert.strictEqual(pending.status, 200);
+    assert(Array.isArray(pending.json.missing_attendance));
+    const rahulMissing = pending.json.missing_attendance.find((m) => m.subject_code === 'BCA402');
+    assert(rahulMissing, 'HOD pending must flag BCA402 missing weekly attendance');
+    assert.strictEqual(rahulMissing.faculty_name, 'Prof. Rahul Verma');
+    assert(!pending.json.missing_attendance.some((m) => m.subject_code === 'BCA401'), 'BCA401 should already be marked submitted for current week');
+
+    // 2. HOD sends reminder (and clean up notice/audit afterward)
+    const remindRes = await api('hod@uni.test', 'POST', '/api/hod/attendance/remind', {
+      subject_id: rahulMissing.subject_id,
+      week_start: rahulMissing.week_start,
+    });
+    assert.strictEqual(remindRes.status, 200);
+    assert.strictEqual(remindRes.json.success, true);
+
+    // 3. Teacher gets fresh weekly sheets for testWeek and nextWeek
+    const sheetsRes = await api('teacher@uni.test', 'GET', `/api/faculty/me/attendance-sheets?week=${testWeek}`);
+    assert.strictEqual(sheetsRes.status, 200);
+    const bca402Sheet = sheetsRes.json.sheets.find((s) => s.subject_code === 'BCA402');
+    assert(bca402Sheet, 'Rahul Verma must see BCA402 in attendance sheets');
+    assert.strictEqual(bca402Sheet.is_submitted, false);
+
+    // 4. Download blank CSV for testWeek (scheduled Wed 2026-12-09 & Thu 2026-12-10)
+    const blankRes = await api('teacher@uni.test', 'GET', `/api/faculty/me/attendance-sheets/${bca402Id}/template?week=${testWeek}`);
+    assert.strictEqual(blankRes.status, 200);
+    const blankLines = blankRes.json.trim().split(/\r?\n/);
+    assert.strictEqual(blankLines[0], 'student_number,full_name,2026-12-09 (Wed),2026-12-10 (Thu)');
+    assert(blankLines.length >= 2);
+    assert(blankLines[1].endsWith(',,'), 'Blank weekly attendance CSV must leave date columns empty');
+
+    // Unassigned teacher cannot download or upload BCA402 attendance
+    const denied = await api('teacher2@uni.test', 'GET', `/api/faculty/me/attendance-sheets/${bca402Id}/template?week=${testWeek}`);
+    assert.strictEqual(denied.status, 403);
+
+    async function uploadAttendanceCsv(filename, csvContent) {
+      const form = new FormData();
+      form.append('file', new Blob([csvContent], { type: 'text/csv' }), filename);
+      const r = await fetch(`${BASE}/api/faculty/me/attendance-sheets/${bca402Id}/upload?week=${testWeek}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${await login('teacher@uni.test')}` },
+        body: form,
+      });
+      return { status: r.status, json: await r.json() };
+    }
+
+    // 5. Incomplete / invalid CSV -> 400 with needs_reupload: true
+    const studentLines = blankLines.slice(1).map((line) => line.split(',').slice(0, 2));
+    const badCsv = [
+      blankLines[0],
+      ...studentLines.map(([roll, name], i) => `${roll},${name},${i === 0 ? '' : 'P'},${i === 1 ? 'Z' : 'A'}`),
+    ].join('\n');
+    const badUpload = await uploadAttendanceCsv('bad_att.csv', badCsv);
+    assert.strictEqual(badUpload.status, 400);
+    assert.strictEqual(badUpload.json.needs_reupload, true);
+    assert(badUpload.json.missing_entries.length >= 1);
+    assert(badUpload.json.invalid_entries.length >= 1);
+
+    // 6. Complete P / A CSV -> 200, writes attendance rows & marks testWeek submitted
+    const goodCsv = [
+      blankLines[0],
+      ...studentLines.map(([roll, name], i) => `${roll},${name},${i % 2 === 0 ? 'P' : 'A'},P`),
+    ].join('\r\n');
+    const okUpload = await uploadAttendanceCsv('good_att.csv', goodCsv);
+    assert.strictEqual(okUpload.status, 200);
+    assert.strictEqual(okUpload.json.success, true);
+    assert.strictEqual(okUpload.json.days_recorded, 2);
+    assert.strictEqual(okUpload.json.records_count, studentLines.length * 2);
+
+    // 7. Verify records endpoint returns present/absent statuses and testWeek is submitted while nextWeek is fresh
+    const recRes = await api('teacher@uni.test', 'GET', `/api/faculty/me/attendance-sheets/${bca402Id}/records?week=${testWeek}`);
+    assert.strictEqual(recRes.status, 200);
+    assert.strictEqual(recRes.json.students[0].statuses['2026-12-09'], 'present');
+
+    const afterTestWeek = await api('teacher@uni.test', 'GET', `/api/faculty/me/attendance-sheets?week=${testWeek}`);
+    assert.strictEqual(afterTestWeek.json.sheets.find((s) => s.subject_code === 'BCA402').is_submitted, true);
+
+    const afterNextWeek = await api('teacher@uni.test', 'GET', `/api/faculty/me/attendance-sheets?week=${nextWeek}`);
+    assert.strictEqual(afterNextWeek.json.sheets.find((s) => s.subject_code === 'BCA402').is_submitted, false);
+  } finally {
+    await db.query("DELETE FROM attendance WHERE subject_id = $1 AND class_date BETWEEN '2026-12-07'::date AND '2026-12-13'::date", [bca402Id]);
+    await db.query("DELETE FROM weekly_attendance_submissions WHERE subject_id = $1 AND week_start = '2026-12-07'::date", [bca402Id]);
+    await db.query("DELETE FROM notices WHERE title LIKE 'Weekly Attendance Reminder: BCA402%'");
+    await db.query("DELETE FROM audit_logs WHERE action = 'hod_attendance_reminder' AND entity_id = $1", [bca402Id]);
+    if (prevSub) {
+      await db.query(
+        'INSERT INTO weekly_attendance_submissions (subject_id, faculty_id, week_start, submitted_at, submitted_by, days_recorded, records_count) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (subject_id, week_start) DO NOTHING',
+        [prevSub.subject_id, prevSub.faculty_id, prevSub.week_start, prevSub.submitted_at, prevSub.submitted_by, prevSub.days_recorded, prevSub.records_count]
+      );
+    }
+    for (const a of prevAtt) {
+      await db.query(
+        'INSERT INTO attendance (student_id, subject_id, class_date, status) VALUES ($1,$2,$3::date,$4) ON CONFLICT (student_id, subject_id, class_date) DO UPDATE SET status = EXCLUDED.status',
+        [a.student_id, bca402Id, a.class_date, a.status]
+      );
+    }
+  }
+});
+
+// ----------------------------------------------------------------
+// 12. Unscheduled Subjects (No Weekly Timetable Slots) Pending Action
+// ----------------------------------------------------------------
+test('HOD pending reports subjects without timetable slots and schedules a clash-free slot', async () => {
+  const bca202 = (await db.query("SELECT id FROM subjects WHERE subject_code = 'BCA202'")).rows[0];
+  const prevSlots = (await db.query('SELECT * FROM timetables WHERE subject_id = $1', [bca202.id])).rows;
+  let createdSlotId = null;
+
+  await db.query('DELETE FROM timetables WHERE subject_id = $1', [bca202.id]);
+  try {
+    const pending = await api('hod@uni.test', 'GET', '/api/hod/pending');
+    assert.strictEqual(pending.status, 200);
+    const unscheduled = pending.json.unscheduled_subjects.find((u) => u.subject_code === 'BCA202');
+    assert(unscheduled, 'BCA202 must appear in pending unscheduled_subjects');
+    assert(unscheduled.faculty_id, 'BCA202 should surface its assigned faculty');
+
+    const rooms = await api('hod@uni.test', 'GET', '/api/hod/classrooms');
+    const room202 = rooms.json.find((r) => r.room_number.includes('202')) || rooms.json[0];
+
+    // Pick a clash-free slot on Saturday (day_of_week = 6)
+    const scheduled = await api('hod@uni.test', 'POST', `/api/hod/subjects/${bca202.id}/timetable`, {
+      faculty_id: unscheduled.faculty_id,
+      classroom_id: room202.id,
+      day_of_week: 6,
+      start_time: '10:00',
+      end_time: '11:00',
+    });
+    assert.strictEqual(scheduled.status, 201);
+    createdSlotId = scheduled.json.timetable.id;
+
+    // Duplicate overlapping slot on Saturday 10:00-11:00 must be rejected as a clash -> 400
+    const clash = await api('hod@uni.test', 'POST', `/api/hod/subjects/${bca202.id}/timetable`, {
+      faculty_id: unscheduled.faculty_id,
+      classroom_id: room202.id,
+      day_of_week: 6,
+      start_time: '10:30',
+      end_time: '11:30',
+    });
+    assert.strictEqual(clash.status, 400);
+    assert(clash.json.error.toLowerCase().includes('clash'));
+
+    // Student batch clash: scheduling BCA202 (BCA Sem 2) on Tuesday 10:00-11:00 with a DIFFERENT teacher & room
+    // still clashes because BCA Sem 2 already has BCA201 on Tuesday 10:00-11:00
+    const csFaculty = await api('hod@uni.test', 'GET', '/api/hod/faculty');
+    const profRahul = csFaculty.json.faculty.find((f) => f.email === 'teacher@uni.test');
+    const room201 = rooms.json.find((r) => r.room_number.includes('201')) || rooms.json[1];
+    const batchClash = await api('hod@uni.test', 'POST', `/api/hod/subjects/${bca202.id}/timetable`, {
+      faculty_id: profRahul.id,
+      classroom_id: room201.id,
+      day_of_week: 2,
+      start_time: '10:00',
+      end_time: '11:00',
+    });
+    assert.strictEqual(batchClash.status, 400);
+    assert(batchClash.json.error.includes('Student batch conflict'));
+
+    const pendingAfter = await api('hod@uni.test', 'GET', '/api/hod/pending');
+    assert(!pendingAfter.json.unscheduled_subjects.some((u) => u.subject_code === 'BCA202'), 'BCA202 must clear from unscheduled_subjects once scheduled');
+  } finally {
+    if (createdSlotId) await db.query('DELETE FROM timetables WHERE id = $1', [createdSlotId]);
+    for (const s of prevSlots) {
+      await db.query(
+        'INSERT INTO timetables (id, subject_id, faculty_id, classroom_id, day_of_week, start_time, end_time) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING',
+        [s.id, s.subject_id, s.faculty_id, s.classroom_id, s.day_of_week, s.start_time, s.end_time]
+      );
+    }
+  }
+});
+
+// ----------------------------------------------------------------
+// 13. Admission Form System (Applicant Submit -> Admin Review & Enroll)
+// ----------------------------------------------------------------
+test('Applicant submits admission application, reflects in Admin tab, and Admin can approve & enroll', async () => {
+  // 1. Public approved courses list
+  const coursesRes = await api(null, 'GET', '/api/admissions/courses');
+  assert.strictEqual(coursesRes.status, 200);
+  const bba = coursesRes.json.courses.find((c) => c.course_name === 'BBA');
+  assert(bba, 'BBA course must be open for admission');
+
+  // 2. Register a fresh applicant and log in
+  const testEmail = `app_test_${Date.now()}@uni.test`;
+  const regRes = await fetch(BASE + '/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ full_name: 'Arjun Applicant', email: testEmail, password: PASSWORD }),
+  });
+  assert.strictEqual(regRes.status, 201);
+  const applicantUserId = (await regRes.json()).user.id;
+
+  let createdAppId = null;
+  try {
+    // RBAC: student cannot apply; applicant cannot access admin admission-applications
+    const studentApply = await api('student1@uni.test', 'POST', '/api/admissions/apply', {
+      course_id: bba.course_id,
+      full_name: 'Riya',
+      email: 'student1@uni.test',
+      phone: '+91-9999999999',
+      date_of_birth: '2006-01-01',
+      gender: 'Female',
+      address: '123 Main Street, Bhopal',
+      previous_qualification: '10+2',
+      previous_institution: 'Demo School',
+      percentage_or_gpa: 85,
+      passing_year: 2026,
+    });
+    assert.strictEqual(studentApply.status, 403);
+
+    const applicantAdminDenied = await api(testEmail, 'GET', '/api/admin/admission-applications');
+    assert.strictEqual(applicantAdminDenied.status, 403);
+
+    // 3. Applicant submits admission form
+    const submitRes = await api(testEmail, 'POST', '/api/admissions/apply', {
+      course_id: bba.course_id,
+      full_name: 'Arjun Applicant',
+      email: testEmail,
+      phone: '+91-9811122233',
+      date_of_birth: '2007-08-19',
+      gender: 'Male',
+      address: '88 Civil Lines, Bhopal',
+      previous_qualification: '10+2 Commerce',
+      previous_institution: 'Central Public School',
+      percentage_or_gpa: 86.4,
+      passing_year: 2026,
+      guardian_name: 'Rajesh Applicant',
+      guardian_phone: '+91-9811100000',
+      statement_of_purpose: 'Looking forward to studying management.',
+    });
+    assert.strictEqual(submitRes.status, 201);
+    createdAppId = submitRes.json.application.id;
+    assert(submitRes.json.application.application_number.startsWith('APP-'));
+    assert.strictEqual(submitRes.json.application.status, 'pending');
+
+    // Duplicate active application for same course -> 409
+    const dupRes = await api(testEmail, 'POST', '/api/admissions/apply', {
+      course_id: bba.course_id,
+      full_name: 'Arjun Applicant',
+      email: testEmail,
+      phone: '+91-9811122233',
+      date_of_birth: '2007-08-19',
+      gender: 'Male',
+      address: '88 Civil Lines, Bhopal',
+      previous_qualification: '10+2 Commerce',
+      previous_institution: 'Central Public School',
+      percentage_or_gpa: 86.4,
+      passing_year: 2026,
+    });
+    assert.strictEqual(dupRes.status, 409);
+
+    // 4. Applicant sees application in my-applications
+    const myApps = await api(testEmail, 'GET', '/api/admissions/my-applications');
+    assert.strictEqual(myApps.status, 200);
+    assert(myApps.json.applications.some((a) => a.id === createdAppId));
+
+    // 5. Admin sees the new application in admin/admission-applications
+    const adminList = await api('admin@uni.test', 'GET', `/api/admin/admission-applications?q=${encodeURIComponent(testEmail)}`);
+    assert.strictEqual(adminList.status, 200);
+    assert(adminList.json.applications.some((a) => a.id === createdAppId && a.status === 'pending'));
+
+    // 6. Admin approves & enrolls the applicant as a student (first verify unseen decision notification clears once seen)
+    const rejectThenSee = await api('admin@uni.test', 'PATCH', `/api/admin/admission-applications/${createdAppId}`, {
+      status: 'rejected',
+      admin_remarks: 'Please clarify score.',
+      enroll_student: false,
+    });
+    assert.strictEqual(rejectThenSee.status, 200);
+
+    const beforeSeen = await api(testEmail, 'GET', '/api/admissions/my-applications');
+    assert.strictEqual(beforeSeen.json.unseen_decisions_count, 1);
+
+    const markSeen = await api(testEmail, 'POST', '/api/admissions/my-applications/mark-seen');
+    assert.strictEqual(markSeen.status, 200);
+    assert.strictEqual(markSeen.json.marked_count, 1);
+
+    const afterSeen = await api(testEmail, 'GET', '/api/admissions/my-applications');
+    assert.strictEqual(afterSeen.json.unseen_decisions_count, 0);
+
+    const approveRes = await api('admin@uni.test', 'PATCH', `/api/admin/admission-applications/${createdAppId}`, {
+      status: 'approved',
+      admin_remarks: 'Documents verified. Welcome to BBA!',
+      enroll_student: true,
+    });
+    assert.strictEqual(approveRes.status, 200);
+    assert.strictEqual(approveRes.json.application.status, 'approved');
+    assert(approveRes.json.enrolled_student?.student_number, 'Approved applicant should be enrolled as a student');
+  } finally {
+    if (createdAppId) await db.query('DELETE FROM admission_applications WHERE id = $1', [createdAppId]);
+    await db.query('DELETE FROM student_enrollments WHERE student_id IN (SELECT id FROM students WHERE user_id = $1)', [applicantUserId]);
+    await db.query('DELETE FROM students WHERE user_id = $1', [applicantUserId]);
+    await db.query('DELETE FROM audit_logs WHERE user_id = $1', [applicantUserId]);
+    await db.query('DELETE FROM users WHERE id = $1', [applicantUserId]);
+  }
+});
